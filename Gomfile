@@ -6,3 +6,6 @@ gom 'github.com/btcsuite/btcd/btcec'
 
 # Portable home directory
 gom 'github.com/mitchellh/go-homedir'
+
+# Git bindings
+gom 'gopkg.in/libgit2/git2go.v22'
