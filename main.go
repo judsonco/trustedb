@@ -68,6 +68,43 @@ func createKeyfile(path string) error {
 	return w.Flush()
 }
 
+func verifyNoDoubleAdd(keys []KeyEntry) error {
+	logKeys := map[string]int{}
+	logIdentifiers := map[string]int{}
+	for _, key := range keys {
+		t, err := hex.DecodeString(key.PubKey)
+		if err != nil {
+			return err
+		}
+		p, err := btcec.ParsePubKey(t, btcec.S256())
+		if err != nil {
+			return err
+		}
+		c := hex.EncodeToString(p.SerializeCompressed())
+		e := strings.ToLower(key.Identifier)
+		_, hasKey := logKeys[c]
+		_, hasIdentifier := logIdentifiers[e]
+		if hasKey || hasIdentifier {
+			if key.Cmd == "+" {
+				return errors.New("An entry must be removed before it may be added again")
+			}
+		} else {
+			if key.Cmd == "-" {
+				return errors.New("An entry must be added before it may be removed")
+			}
+		}
+		if key.Cmd == "-" {
+			delete(logIdentifiers, e)
+			delete(logKeys, c)
+		} else if key.Cmd == "+" {
+			logIdentifiers[e] = 1
+			logKeys[c] = 1
+		}
+	}
+
+	return nil
+}
+
 func verifyDbFile(path string, skipLast bool) error {
 	return nil
 }
