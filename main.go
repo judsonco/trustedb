@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/btcsuite/btcd/btcec"
@@ -18,14 +19,26 @@ import (
 
 // GenericFlag is the flag type for types implementing Generic
 type SigEntry struct {
-	PubKey string
-	Sig    string
+	PubKeyBytes []byte
+	SigBytes    []byte
+}
+
+type KeyDiscoveryRevealEntry struct {
+	PubKeyBytes []byte
+}
+
+type KeyDiscoveryEntry struct {
+	SignerPubKeyBytes []byte
+	Sha256PubKeyBytes []byte
+	SigBytes          []byte
 }
 
 type KeyEntry struct {
-	Cmd        string
-	Identifier string
-	PubKey     string
+	Cmd                     string
+	Identifier              string
+	DoubleSha256PubKeyBytes []byte
+	SelfSigBytes            []byte
+	DiscoveryEntry          KeyDiscoveryRevealEntry
 }
 
 func readLines(path string) ([]string, error) {
@@ -71,21 +84,14 @@ func createKeyfile(path string) error {
 
 func verifyNoDoubleAdd(keys []KeyEntry) error {
 	logKeys := map[string]int{}
-	logIdentifiers := map[string]int{}
 	for _, key := range keys {
-		t, err := hex.DecodeString(key.PubKey)
-		if err != nil {
-			return err
-		}
-		p, err := btcec.ParsePubKey(t, btcec.S256())
+		p, err := btcec.ParsePubKey(key.DiscoveryEntry.PubKeyBytes, btcec.S256())
 		if err != nil {
 			return err
 		}
 		c := hex.EncodeToString(p.SerializeCompressed())
-		e := strings.ToLower(key.Identifier)
 		_, hasKey := logKeys[c]
-		_, hasIdentifier := logIdentifiers[e]
-		if hasKey || hasIdentifier {
+		if hasKey {
 			if key.Cmd == "+" {
 				return errors.New("An entry must be removed before it may be added again")
 			}
@@ -95,10 +101,8 @@ func verifyNoDoubleAdd(keys []KeyEntry) error {
 			}
 		}
 		if key.Cmd == "-" {
-			delete(logIdentifiers, e)
 			delete(logKeys, c)
 		} else if key.Cmd == "+" {
-			logIdentifiers[e] = 1
 			logKeys[c] = 1
 		}
 	}
@@ -110,9 +114,9 @@ func verifySequentialEntrySigs(keys []KeyEntry, sigs [][]SigEntry) error {
 	content := ""
 	signers := map[string]*btcec.PublicKey{}
 	for i, entry := range keys {
+		fmt.Println(entry)
 		// Make sure the content is the same
-		keyBytes, _ := hex.DecodeString(entry.PubKey)
-		pk, _ := btcec.ParsePubKey(keyBytes, btcec.S256())
+		pk, _ := btcec.ParsePubKey(entry.DiscoveryEntry.PubKeyBytes, btcec.S256())
 		compHex := hex.EncodeToString(pk.SerializeCompressed())
 		if i > 0 {
 			content += "\n"
@@ -130,24 +134,29 @@ func verifySequentialEntrySigs(keys []KeyEntry, sigs [][]SigEntry) error {
 		}
 		numSuccessfulSigs := 0
 		sigContent := ""
+		fmt.Println(sigs[i])
 		for j, sig := range sigs[i] {
 			if j > 0 {
 				sigContent += "\n"
 			}
-			sigContent += strings.Join([]string{"SigFrom", " ", sig.PubKey, " ", sig.Sig}, "")
-			if pk, ok := signers[sig.PubKey]; ok {
-				sigBytes, _ := hex.DecodeString(sig.Sig)
-				btcecSig, err := btcec.ParseDERSignature(sigBytes, btcec.S256())
-				if err != nil {
-					return err
-				}
+			sigContent += strings.Join([]string{"SigFrom", " ", hex.EncodeToString(sig.PubKeyBytes), " ", hex.EncodeToString(sig.SigBytes)}, "")
+			btcecSig, err := btcec.ParseDERSignature(sig.SigBytes, btcec.S256())
+			if err != nil {
+				return err
+			}
+			contentBytes := []byte(content)
 
-				contentBytes, _ := hex.DecodeString(content)
+			hasher := sha256.New()
+			hasher.Write(contentBytes)
+			contentSha := hasher.Sum(nil)
 
-				hasher := sha256.New()
-				hasher.Write(contentBytes)
-				if btcecSig.Verify(hasher.Sum(nil), pk) {
+			fmt.Println(content, len(content))
+			fmt.Println(hex.EncodeToString(contentSha))
+
+			if pk, ok := signers[hex.EncodeToString(sig.PubKeyBytes)]; ok {
+				if btcecSig.Verify(contentSha, pk) {
 					numSuccessfulSigs += 1
+					fmt.Println("SuccessSig")
 					if numSuccessfulSigs >= req {
 						signers[hex.EncodeToString(pk.SerializeCompressed())] = pk
 					}
@@ -160,7 +169,7 @@ func verifySequentialEntrySigs(keys []KeyEntry, sigs [][]SigEntry) error {
 }
 
 func verifyDbFile(path string, skipLast bool) error {
-	keys, _, err := parseDbFile(path)
+	keys, sigs, err := parseDbFile(path)
 	if err != nil {
 		return err
 	}
@@ -169,7 +178,84 @@ func verifyDbFile(path string, skipLast bool) error {
 		return err
 	}
 
+	if err := verifySequentialEntrySigs(keys, sigs); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func sha256ByteSum(b []byte) []byte {
+	hasher := sha256.New()
+	hasher.Write(b)
+
+	return hasher.Sum(nil)
+}
+
+func parseKeyEntryLine(l string) (*KeyEntry, error) {
+	f := strings.Fields(l)
+	if len(f) != reflect.ValueOf(&KeyEntry{}).Elem().NumField() {
+		return nil, errors.New("Malformed Key Entry Line")
+	}
+
+	cmd, email, doubleSha256PubKeyHex, selfsig := f[0], f[1], f[2], f[3]
+	doubleSha256PubKeyBytes, _ := hex.DecodeString(doubleSha256PubKeyHex)
+	selfSigBytes, _ := hex.DecodeString(selfsig)
+	keyEntry := KeyEntry{
+		Cmd:                     cmd,
+		Identifier:              email,
+		DoubleSha256PubKeyBytes: doubleSha256PubKeyBytes,
+		SelfSigBytes:            selfSigBytes,
+	}
+
+	return &keyEntry, nil
+}
+
+func parseSigEntryLines(lines []string) ([]SigEntry, error) {
+	e := []SigEntry{}
+
+	for _, l := range lines {
+		f := strings.Fields(l)
+		if len(f) != reflect.ValueOf(&SigEntry{}).Elem().NumField() {
+			return nil, errors.New("Malformed Sig Entry Line")
+		}
+
+		p, s := f[1], f[2]
+
+		pubKeyBytes, _ := hex.DecodeString(p)
+		sigBytes, _ := hex.DecodeString(s)
+		e = append(e, SigEntry{
+			PubKeyBytes: pubKeyBytes,
+			SigBytes:    sigBytes,
+		})
+	}
+
+	return e, nil
+}
+
+func parseKeyDiscoveryLines(lines []string) ([]KeyDiscoveryEntry, error) {
+	e := []KeyDiscoveryEntry{}
+
+	for _, l := range lines {
+		f := strings.Fields(l)
+		if len(f) != reflect.ValueOf(&KeyDiscoveryEntry{}).Elem().NumField() {
+			return nil, errors.New("Malformed Key Discovery Line")
+		}
+
+		pubKey, sha256PubKey, sig := f[1], f[2], f[3]
+
+		pubKeyBytes, _ := hex.DecodeString(pubKey)
+		sha256PubKeyBytes, _ := hex.DecodeString(sha256PubKey)
+		sigBytes, _ := hex.DecodeString(sig)
+
+		e = append(e, KeyDiscoveryEntry{
+			SignerPubKeyBytes: pubKeyBytes,
+			Sha256PubKeyBytes: sha256PubKeyBytes,
+			SigBytes:          sigBytes,
+		})
+	}
+
+	return e, nil
 }
 
 func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
@@ -182,36 +268,38 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		return nil, nil, err
 	}
 
+	// Keep track of the log entries
 	keyEntries := []KeyEntry{}
 	sigEntries := [][]SigEntry{}
-	a := regexp.MustCompile("(?m)^=").Split(strings.Join(lines, "\n"), -1)
-	entriesWithSignatures := []string{}
+	//disEntries := [][]KeyDiscoveryEntry{}
+
+	entriesWithSignatures := regexp.MustCompile("(?m)^=").Split(strings.Join(lines, "\n"), -1)
 	// Remove the blank entry that is matched
-	if len(a) > 0 && len(a[0]) == 0 {
-		_, entriesWithSignatures = a[0], a[1:]
-	} else {
-		entriesWithSignatures = a
+	if len(entriesWithSignatures) > 0 && len(entriesWithSignatures[0]) == 0 {
+		_, entriesWithSignatures = entriesWithSignatures[0], entriesWithSignatures[1:]
 	}
+
 	for _, entryWithSignatures := range entriesWithSignatures {
-		a := regexp.MustCompile("(?m)^").Split(entryWithSignatures, -1)
-		entryLine, sigLines := a[0], a[1:]
-		f := strings.Fields(entryLine)
-		cmd, email, pubkey := f[0], f[1], f[2]
-		keyEntries = append(keyEntries, KeyEntry{
-			Cmd:        cmd,
-			Identifier: email,
-			PubKey:     pubkey,
-		})
-		sigs := []SigEntry{}
-		for _, sigLine := range sigLines {
-			f := strings.Fields(sigLine)
-			pubKey, sig := f[1], f[2]
-			sigs = append(sigs, SigEntry{
-				PubKey: pubKey,
-				Sig:    sig,
-			})
+		keyEntryLine := regexp.MustCompile("(?m)^=[+-].*$").FindAllString(entryWithSignatures, -1)[0]
+		disEntryLines := regexp.MustCompile("(?m)^d=.*$").FindAllString(entryWithSignatures, -1)
+		sigEntryLines := regexp.MustCompile("(?m)^s=.*$").FindAllString(entryWithSignatures, -1)
+		revEntryLines := regexp.MustCompile("(?m)^k=.*$").FindAllString(entryWithSignatures, -1)
+
+		if len(revEntryLines) > 1 {
+			return nil, nil, errors.New("Each KeyEntry must only reveal once")
 		}
-		sigEntries = append(sigEntries, sigs)
+
+		keyEntry, err := parseKeyEntryLine(keyEntryLine)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		sigEntries, err := parseSigEntryLines(sigEntryLines)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		fmt.Println(keyEntry, disEntryLines, sigEntries, revEntryLines)
 	}
 
 	return keyEntries, sigEntries, nil
