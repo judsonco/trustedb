@@ -11,6 +11,18 @@ import (
 	"os"
 )
 
+// GenericFlag is the flag type for types implementing Generic
+type SigEntry struct {
+	PubKey string
+	Sig    string
+}
+
+type KeyEntry struct {
+	Cmd        string
+	Identifier string
+	PubKey     string
+}
+
 func readLines(path string) ([]string, error) {
 	path, err := homedir.Expand(path)
 	file, err := os.Open(path)
