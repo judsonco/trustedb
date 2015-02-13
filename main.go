@@ -5,10 +5,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/codegangsta/cli"
 	"github.com/mitchellh/go-homedir"
+
 	"os"
+	"regexp"
 )
 
 // GenericFlag is the flag type for types implementing Generic
@@ -62,6 +66,55 @@ func createKeyfile(path string) error {
 	fmt.Fprintln(w, hex.EncodeToString(k.Serialize()))
 
 	return w.Flush()
+}
+
+func verifyDbFile(path string, skipLast bool) error {
+	return nil
+}
+
+func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
+	path, err := homedir.Expand(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	lines, err := readLines(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	keyEntries := []KeyEntry{}
+	sigEntries := [][]SigEntry{}
+	a := regexp.MustCompile("(?m)^=").Split(strings.Join(lines, "\n"), -1)
+	entriesWithSignatures := []string{}
+	// Remove the blank entry that is matched
+	if len(a) > 0 && len(a[0]) == 0 {
+		_, entriesWithSignatures = a[0], a[1:]
+	} else {
+		entriesWithSignatures = a
+	}
+	for _, entryWithSignatures := range entriesWithSignatures {
+		a := regexp.MustCompile("(?m)^").Split(entryWithSignatures, -1)
+		entryLine, sigLines := a[0], a[1:]
+		f := strings.Fields(entryLine)
+		cmd, email, pubkey := f[0], f[1], f[2]
+		keyEntries = append(keyEntries, KeyEntry{
+			Cmd:        cmd,
+			Identifier: email,
+			PubKey:     pubkey,
+		})
+		sigs := []SigEntry{}
+		for _, sigLine := range sigLines {
+			f := strings.Fields(sigLine)
+			pubKey, sig := f[1], f[2]
+			sigs = append(sigs, SigEntry{
+				PubKey: pubKey,
+				Sig:    sig,
+			})
+		}
+		sigEntries = append(sigEntries, sigs)
+	}
+
+	return keyEntries, sigEntries, nil
 }
 
 func keyFromKeyFile(path string) (*btcec.PrivateKey, error) {
