@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -99,6 +100,59 @@ func verifyNoDoubleAdd(keys []KeyEntry) error {
 		} else if key.Cmd == "+" {
 			logIdentifiers[e] = 1
 			logKeys[c] = 1
+		}
+	}
+
+	return nil
+}
+
+func verifySequentialEntrySigs(keys []KeyEntry, sigs [][]SigEntry) error {
+	content := ""
+	signers := map[string]*btcec.PublicKey{}
+	for i, entry := range keys {
+		// Make sure the content is the same
+		keyBytes, _ := hex.DecodeString(entry.PubKey)
+		pk, _ := btcec.ParsePubKey(keyBytes, btcec.S256())
+		compHex := hex.EncodeToString(pk.SerializeCompressed())
+		if i > 0 {
+			content += "\n"
+		}
+		content += strings.Join([]string{"=", entry.Cmd, " ", entry.Identifier, " ", compHex}, "")
+
+		// Special case for the first key. So you can approve yourself
+		if len(signers) == 0 {
+			signers[compHex] = pk
+		}
+
+		req := 2
+		if len(signers) < 2 {
+			req = len(signers)
+		}
+		numSuccessfulSigs := 0
+		sigContent := ""
+		for j, sig := range sigs[i] {
+			if j > 0 {
+				sigContent += "\n"
+			}
+			sigContent += strings.Join([]string{"SigFrom", " ", sig.PubKey, " ", sig.Sig}, "")
+			if pk, ok := signers[sig.PubKey]; ok {
+				sigBytes, _ := hex.DecodeString(sig.Sig)
+				btcecSig, err := btcec.ParseDERSignature(sigBytes, btcec.S256())
+				if err != nil {
+					return err
+				}
+
+				contentBytes, _ := hex.DecodeString(content)
+
+				hasher := sha256.New()
+				hasher.Write(contentBytes)
+				if btcecSig.Verify(hasher.Sum(nil), pk) {
+					numSuccessfulSigs += 1
+					if numSuccessfulSigs >= req {
+						signers[hex.EncodeToString(pk.SerializeCompressed())] = pk
+					}
+				}
+			}
 		}
 	}
 
