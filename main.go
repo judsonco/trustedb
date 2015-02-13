@@ -88,12 +88,40 @@ func main() {
 	app.Usage = "Verifiable append-only file of trusted keys"
 	app.Commands = []cli.Command{
 		{
+			Name:  "init",
+			Usage: "Create a Trustedb file",
+			Flags: []cli.Flag{
+				cli.BoolFlag{
+					Name:  "skiplast",
+					Usage: "Skip threshold check on last entry",
+				},
+				cli.StringFlag{
+					Name:   "trustfile",
+					Usage:  "Path to your trustfile",
+					EnvVar: "TRUSTEDB_TRUSTFILE",
+				},
+			},
+			Action: func(c *cli.Context) {
+				trustfile := c.String("trustfile")
+				if len(trustfile) == 0 {
+					fmt.Println("Please specify a trustfile")
+					os.Exit(1)
+				}
+
+				err := verifyDbFile(trustfile, c.Bool("skiplast"))
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+			},
+		},
+		{
 			Name:  "approve",
 			Usage: "Approve the addition of a key",
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:   "keyfile",
-					Usage:  "Path to a keyfile with a DER formatted private key",
+					Usage:  "Path to your keyfile with a DER formatted private key",
 					EnvVar: "TRUSTEDB_KEYFILE",
 				},
 			},
@@ -107,7 +135,7 @@ func main() {
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:   "keyfile",
-					Usage:  "Path to store a DER formatted private key",
+					Usage:  "Path to store your DER formatted private key",
 					EnvVar: "TRUSTEDB_KEYFILE",
 				},
 			},
@@ -123,16 +151,67 @@ func main() {
 			},
 		},
 		{
+			Name:  "request",
+			Usage: "Approve the addition of a key",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "keyfile",
+					Usage:  "Path to your keyfile with a DER formatted private key",
+					EnvVar: "TRUSTEDB_KEYFILE",
+				},
+				cli.StringFlag{
+					Name:   "trustfile",
+					Usage:  "Path to your trustfile",
+					EnvVar: "TRUSTEDB_TRUSTFILE",
+				},
+			},
+			Action: func(c *cli.Context) {
+				keyfile := c.String("keyfile")
+				if len(keyfile) == 0 {
+					fmt.Println("Please specify a keyfile")
+					os.Exit(1)
+				}
+				trustfile := c.String("trustfile")
+				if len(trustfile) == 0 {
+					fmt.Println("Please specify a trustfile")
+					os.Exit(1)
+				}
+				privKey, err := keyFromKeyFile(keyfile)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+				fmt.Println(trustfile)
+				fmt.Println(hex.EncodeToString(privKey.PubKey().SerializeCompressed()))
+			},
+		},
+		{
 			Name:  "verify",
 			Usage: "Verify the integrity of a Trustedb file",
 			Flags: []cli.Flag{
 				cli.BoolFlag{
 					Name:  "skiplast",
-					Usage: "Skip last log entry",
+					Usage: "Skip threshold check on last entry",
+				},
+				cli.StringFlag{
+					Name:   "trustfile",
+					Usage:  "Path to your trustfile",
+					EnvVar: "TRUSTEDB_TRUSTFILE",
 				},
 			},
 			Action: func(c *cli.Context) {
-				fmt.Println("verifying ", c.Args().First())
+				trustfile := c.String("trustfile")
+				if len(trustfile) == 0 {
+					fmt.Println("Please specify a trustfile")
+					os.Exit(1)
+				}
+
+				keys, sigs, err := parseDbFile(trustfile)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+				fmt.Println(keys, sigs)
 			},
 		},
 	}
