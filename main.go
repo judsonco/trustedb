@@ -106,6 +106,15 @@ func verifyNoDoubleAdd(keys []KeyEntry) error {
 }
 
 func verifyDbFile(path string, skipLast bool) error {
+	keys, _, err := parseDbFile(path)
+	if err != nil {
+		return err
+	}
+
+	if err := verifyNoDoubleAdd(keys); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -296,12 +305,12 @@ func main() {
 					os.Exit(1)
 				}
 
-				keys, sigs, err := parseDbFile(trustfile)
-				if err != nil {
+				if err := verifyDbFile(trustfile, c.Bool("skiplast")); err != nil {
 					fmt.Println(err)
 					os.Exit(1)
+				} else {
+					fmt.Println("Success!")
 				}
-				fmt.Println(keys, sigs)
 			},
 		},
 	}
