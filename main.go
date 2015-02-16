@@ -2,11 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -21,8 +25,7 @@ import (
 
 // GenericFlag is the flag type for types implementing Generic
 type SigEntry struct {
-	PubKeyBytes []byte
-	SigBytes    []byte
+	SigBytes []byte
 }
 
 type KeyDiscoveryRevealEntry struct {
@@ -30,7 +33,6 @@ type KeyDiscoveryRevealEntry struct {
 }
 
 type KeyDiscoveryEntry struct {
-	SignerPubKeyBytes []byte
 	Sha256PubKeyBytes []byte
 	SigBytes          []byte
 }
@@ -39,7 +41,6 @@ type KeyEntry struct {
 	Cmd                     string
 	Identifier              string
 	DoubleSha256PubKeyBytes []byte
-	SelfSigBytes            []byte
 	DiscoveryEntry          KeyDiscoveryRevealEntry
 }
 
@@ -82,6 +83,25 @@ func createKeyfile(path string) error {
 	fmt.Fprintln(w, hex.EncodeToString(k.Serialize()))
 
 	return w.Flush()
+}
+
+func cp(dst, src string) error {
+	s, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	// no need to check errors on read only file, we already got everything
+	// we need from the filesystem, so nothing can go wrong now.
+	defer s.Close()
+	d, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(d, s); err != nil {
+		d.Close()
+		return err
+	}
+	return d.Close()
 }
 
 func createTrustfile(path string) error {
@@ -132,58 +152,158 @@ func verifyNoDoubleAdd(keys []KeyEntry) error {
 	return nil
 }
 
-func verifySequentialEntrySigs(keys []KeyEntry, sigs [][]SigEntry) error {
-	content := ""
-	signers := map[string]*btcec.PublicKey{}
+func contentForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (content string, err error) {
+	if index == 0 {
+		return
+	}
+	if len(keys)-1 < index {
+		return "", errors.New("Index out of bounds")
+	}
+
+	content = ""
 	for i, entry := range keys {
-		fmt.Println(entry)
 		// Make sure the content is the same
 		pk, _ := btcec.ParsePubKey(entry.DiscoveryEntry.PubKeyBytes, btcec.S256())
 		compHex := hex.EncodeToString(pk.SerializeCompressed())
 		if i > 0 {
 			content += "\n"
 		}
-		content += strings.Join([]string{"=", entry.Cmd, " ", entry.Identifier, " ", compHex}, "")
+		if entry.Cmd == "+" {
+			content += strings.Join([]string{"=", entry.Cmd, " ", entry.Identifier, " ", compHex}, "")
+		} else if entry.Cmd == "-" {
+			content += strings.Join([]string{"=", entry.Cmd, " ", compHex}, "")
+		}
+
+		// Don't include the sigs in the last entry
+		// Since that is what we're looking to sign
+		if i == index {
+			return content, nil
+		}
+
+		sigContent := ""
+		for j, sig := range sigs[i] {
+			if j > 0 {
+				sigContent += "\n"
+			}
+			if p, err := checkSigAndRecoverCompact(sig, sigContent); err == nil {
+				sigContent += strings.Join([]string{"SigFrom", " ", hex.EncodeToString(p.SerializeCompressed()), " ", hex.EncodeToString(sig.SigBytes)}, "")
+			} else {
+
+			}
+		}
+		content += sigContent
+	}
+
+	return content, nil
+}
+
+func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (signers map[string]*btcec.PublicKey, required int, err error) {
+	if len(keys) == 0 {
+		return
+	}
+
+	if index > len(keys)-1 {
+		return map[string]*btcec.PublicKey{}, -1, errors.New("Index out of bounds")
+	}
+
+	required = -1
+	for i, entry := range keys {
+		// Make sure the content is the same
+		pk, _ := btcec.ParsePubKey(entry.DiscoveryEntry.PubKeyBytes, btcec.S256())
+		compHex := hex.EncodeToString(pk.SerializeCompressed())
 
 		// Special case for the first key. So you can approve yourself
 		if len(signers) == 0 {
 			signers[compHex] = pk
 		}
 
-		req := 2
+		required = 2
 		if len(signers) < 2 {
-			req = len(signers)
+			required = len(signers)
 		}
+
+		// If we are at the specified index, break
+		// out of the loop, since we only want the signers
+		// that can approve this entry, NOT including the possibly-approved
+		// key entry.
+		if index == i {
+			break
+		}
+
+		content, err := contentForEntryIndex(i, keys, sigs)
+		if err != nil {
+			return map[string]*btcec.PublicKey{}, -1, err
+		}
+
 		numSuccessfulSigs := 0
-		sigContent := ""
-		fmt.Println(sigs[i])
-		for j, sig := range sigs[i] {
-			if j > 0 {
-				sigContent += "\n"
-			}
-			sigContent += strings.Join([]string{"SigFrom", " ", hex.EncodeToString(sig.PubKeyBytes), " ", hex.EncodeToString(sig.SigBytes)}, "")
-			btcecSig, err := btcec.ParseDERSignature(sig.SigBytes, btcec.S256())
-			if err != nil {
-				return err
-			}
-			contentBytes := []byte(content)
-
-			hasher := sha256.New()
-			hasher.Write(contentBytes)
-			contentSha := hasher.Sum(nil)
-
-			fmt.Println(content, len(content))
-			fmt.Println(hex.EncodeToString(contentSha))
-
-			if pk, ok := signers[hex.EncodeToString(sig.PubKeyBytes)]; ok {
-				if btcecSig.Verify(contentSha, pk) {
-					numSuccessfulSigs += 1
-					fmt.Println("SuccessSig")
-					if numSuccessfulSigs >= req {
-						signers[hex.EncodeToString(pk.SerializeCompressed())] = pk
+		for _, sig := range sigs[i] {
+			if checkSig(sig, content, signers) {
+				numSuccessfulSigs += 1
+				if numSuccessfulSigs >= required {
+					k := hex.EncodeToString(pk.SerializeCompressed())
+					if entry.Cmd == "+" {
+						signers[k] = pk
+					} else if entry.Cmd == "-" {
+						delete(signers, k)
 					}
 				}
 			}
+		}
+	}
+
+	return signers, required, nil
+}
+
+func checkSigAndRecoverCompact(sig SigEntry, content string) (*btcec.PublicKey, error) {
+	hasher := sha256.New()
+	hasher.Write([]byte(content))
+	contentSha := hasher.Sum(nil)
+
+	if k, _, err := btcec.RecoverCompact(btcec.S256(), sig.SigBytes, contentSha); err == nil {
+		return k, nil
+	} else {
+		return nil, err
+	}
+}
+
+func checkSig(sig SigEntry, content string, signers map[string]*btcec.PublicKey) bool {
+	if _, err := checkSigAndRecoverCompact(sig, content); err == nil {
+		return true
+	} else {
+		return false
+	}
+}
+
+func verifySequentialEntrySigsAtIndex(index int, keys []KeyEntry, sigs [][]SigEntry) error {
+	for i, _ := range keys {
+		// Get the content to sign
+		content, err := contentForEntryIndex(i, keys, sigs)
+		if err != nil {
+			return err
+		}
+
+		signers, req, err := signersForEntryIndex(i, keys, sigs)
+		if err != nil {
+			return err
+		}
+
+		successfulSigs := 0
+		for _, sig := range sigs[i] {
+			if p, err := checkSigAndRecoverCompact(sig, content); err == nil {
+				if _, ok := signers[hex.EncodeToString(p.SerializeCompressed())]; ok {
+					// Signers can only sign once. Remove after successful sig
+					delete(signers, hex.EncodeToString(p.SerializeCompressed()))
+					successfulSigs += 1
+				}
+			}
+		}
+
+		if successfulSigs < req {
+			return errors.New("Signature threshold not passed")
+		}
+
+		if i == index {
+			break
 		}
 	}
 
@@ -200,14 +320,119 @@ func verifyDbFile(path string, skipLast bool) error {
 		return err
 	}
 
-	if err := verifySequentialEntrySigs(keys, sigs); err != nil {
-		return err
+	if len(keys) > 0 {
+		if err := verifySequentialEntrySigsAtIndex(len(keys)-1, keys, sigs); err != nil {
+			if skipLastKey := len(keys) - 2; skipLast && skipLastKey >= 0 {
+				return verifySequentialEntrySigsAtIndex(skipLastKey, keys, sigs)
+			}
+		}
 	}
 
 	return nil
 }
 
-func addEntryToDbFile(key btcec.PrivateKey, identifier string, path string) error {
+func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey, path string) error {
+	// Make sure we're working with a good DB
+	if err := verifyDbFile(path, true); err != nil {
+		return err
+	}
+
+	keys, sigs, err := parseDbFile(path)
+	if err != nil {
+		return err
+	}
+
+	if len(keys) == 0 {
+		return errors.New("The trustfile is empty")
+	}
+
+	// Make sure there's a pending action
+	lastEntry := len(keys) - 1
+	if err := verifySequentialEntrySigsAtIndex(lastEntry, keys, sigs); err == nil {
+		return errors.New("No pending addition to approve")
+	} else {
+		if keys[lastEntry].Cmd != "+" {
+			return errors.New("No pending addition to approve")
+		}
+
+		// Verify that the private key is correct
+		if bytes.Compare(keys[lastEntry].DoubleSha256PubKeyBytes, sha256ByteSum(sha256ByteSum(pubKey.SerializeCompressed()))) == 0 {
+			return errors.New("The supplied public key does not match the key to be approved")
+		}
+
+		// Get the content to be signed
+		content, err := contentForEntryIndex(lastEntry, keys, sigs)
+		if err != nil {
+			return err
+		}
+
+		// Create a tmp
+		file, err := ioutil.TempFile(os.TempDir(), "prefix")
+		if err != nil {
+			return err
+		}
+
+		tpath, err := filepath.Abs(filepath.Dir(file.Name()))
+		if err != nil {
+			return err
+		}
+		defer os.Remove(file.Name())
+
+		// Copy the trustfile
+		if err := cp(tpath, path); err != nil {
+			return err
+		}
+		// Create the signature
+		w := bufio.NewWriter(file)
+
+		sig, err := btcec.SignCompact(btcec.S256(), key, sha256ByteSum([]byte(content)), true)
+		if err != nil {
+			return err
+		}
+		_, ferr := fmt.Fprintln(w, strings.Join([]string{
+			"s=",
+			hex.EncodeToString(sig),
+		}, " "))
+
+		if ferr != nil {
+			return ferr
+		}
+
+		if err := w.Flush(); err != nil {
+			return err
+		}
+
+		tkeys, tsigs, err := parseDbFile(tpath)
+		if err != nil {
+			return err
+		}
+
+		if err := verifySequentialEntrySigsAtIndex(len(tkeys)-1, tkeys, tsigs); err == nil {
+			sig, err := btcec.SignCompact(btcec.S256(), key, sha256ByteSum([]byte(pubKey.SerializeCompressed())), true)
+			if err != nil {
+				return err
+			}
+
+			_, ferr := fmt.Fprintln(w, strings.Join([]string{
+				"k=",
+				hex.EncodeToString(pubKey.SerializeCompressed()),
+				hex.EncodeToString(sig),
+			}, " "))
+			if ferr != nil {
+				return ferr
+			}
+
+			if err := w.Flush(); err != nil {
+				return err
+			}
+		}
+
+		// Copy the trustfile
+		return cp(path, tpath)
+	}
+}
+
+func addEntryToDbFile(key *btcec.PrivateKey, identifier string, path string) error {
 	if err := verifyDbFile(path, false); err != nil {
 		return err
 	}
@@ -250,14 +475,12 @@ func parseKeyEntryLine(l string) (*KeyEntry, error) {
 		return nil, errors.New("Malformed Key Entry Line")
 	}
 
-	cmd, email, doubleSha256PubKeyHex, selfsig := f[0], f[1], f[2], f[3]
+	cmd, email, doubleSha256PubKeyHex := f[0], f[1], f[2]
 	doubleSha256PubKeyBytes, _ := hex.DecodeString(doubleSha256PubKeyHex)
-	selfSigBytes, _ := hex.DecodeString(selfsig)
 	keyEntry := KeyEntry{
 		Cmd:                     cmd,
 		Identifier:              email,
 		DoubleSha256PubKeyBytes: doubleSha256PubKeyBytes,
-		SelfSigBytes:            selfSigBytes,
 	}
 
 	return &keyEntry, nil
@@ -272,13 +495,11 @@ func parseSigEntryLines(lines []string) ([]SigEntry, error) {
 			return nil, errors.New("Malformed Sig Entry Line")
 		}
 
-		p, s := f[1], f[2]
+		s := f[1]
 
-		pubKeyBytes, _ := hex.DecodeString(p)
 		sigBytes, _ := hex.DecodeString(s)
 		e = append(e, SigEntry{
-			PubKeyBytes: pubKeyBytes,
-			SigBytes:    sigBytes,
+			SigBytes: sigBytes,
 		})
 	}
 
@@ -294,14 +515,12 @@ func parseKeyDiscoveryLines(lines []string) ([]KeyDiscoveryEntry, error) {
 			return nil, errors.New("Malformed Key Discovery Line")
 		}
 
-		pubKey, sha256PubKey, sig := f[1], f[2], f[3]
+		sha256PubKey, sig := f[1], f[2]
 
-		pubKeyBytes, _ := hex.DecodeString(pubKey)
 		sha256PubKeyBytes, _ := hex.DecodeString(sha256PubKey)
 		sigBytes, _ := hex.DecodeString(sig)
 
 		e = append(e, KeyDiscoveryEntry{
-			SignerPubKeyBytes: pubKeyBytes,
 			Sha256PubKeyBytes: sha256PubKeyBytes,
 			SigBytes:          sigBytes,
 		})
@@ -435,19 +654,31 @@ func main() {
 				}
 
 				if len(c.Args()) == 0 {
-					fmt.Println("Please specify a public key to approve")
+					fmt.Println("Please specify a hex encoded public key to approve")
 					os.Exit(1)
 				}
-				pubKey := c.Args()[0]
+				hexPubKeyString := c.Args()[0]
 
-				if len(identifier) == 0 {
-					fmt.Println("Please specify a value for --identifier")
-					os.Exit(1)
-				}
 				privKey, err := keyFromKeyFile(keyfile)
 				if err != nil {
 					fmt.Println(err)
 					os.Exit(1)
+				}
+
+				pubKeyBytes, err := hex.DecodeString(hexPubKeyString)
+				if err != nil {
+					fmt.Println("Unable to parse Public Key")
+					os.Exit(1)
+				}
+
+				if pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256()); err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				} else {
+					if err := approveLastAdditionInDbFile(pubKey, privKey, trustfile); err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					}
 				}
 			},
 		},
@@ -519,7 +750,7 @@ func main() {
 							os.Exit(1)
 						}
 
-						if err := addEntryToDbFile(*privKey, c.String("identifier"), trustfile); err != nil {
+						if err := addEntryToDbFile(privKey, c.String("identifier"), trustfile); err != nil {
 							fmt.Println(err)
 							os.Exit(1)
 						}
