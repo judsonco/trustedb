@@ -6,15 +6,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/codegangsta/cli"
 	"github.com/mitchellh/go-homedir"
 
-	"os"
-	"regexp"
+	// Autoload
+	_ "github.com/joho/godotenv/autoload"
 )
 
 // GenericFlag is the flag type for types implementing Generic
@@ -80,6 +82,26 @@ func createKeyfile(path string) error {
 	fmt.Fprintln(w, hex.EncodeToString(k.Serialize()))
 
 	return w.Flush()
+}
+
+func createTrustfile(path string) error {
+	path, err := homedir.Expand(path)
+	if err != nil {
+		return err
+	}
+
+	lines, err := readLines(path)
+	if len(lines) > 0 {
+		return errors.New("Trustfile already exists at specified path")
+	}
+
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	return nil
 }
 
 func verifyNoDoubleAdd(keys []KeyEntry) error {
@@ -185,6 +207,36 @@ func verifyDbFile(path string, skipLast bool) error {
 	return nil
 }
 
+func addEntryToDbFile(key btcec.PrivateKey, identifier string, path string) error {
+	if err := verifyDbFile(path, false); err != nil {
+		return err
+	}
+
+	path, err := homedir.Expand(path)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0660)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	w := bufio.NewWriter(file)
+	_, fileErr := fmt.Fprintln(w, strings.Join([]string{
+		"=+",
+		strings.Replace(identifier, " ", "", -1),
+		hex.EncodeToString(sha256ByteSum(sha256ByteSum(key.PubKey().SerializeCompressed()))),
+	}, " "))
+
+	if fileErr != nil {
+		return fileErr
+	}
+
+	return w.Flush()
+}
+
 func sha256ByteSum(b []byte) []byte {
 	hasher := sha256.New()
 	hasher.Write(b)
@@ -273,6 +325,11 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 	sigEntries := [][]SigEntry{}
 	//disEntries := [][]KeyDiscoveryEntry{}
 
+	if len(lines) == 0 {
+		return keyEntries, sigEntries, nil
+	}
+	fmt.Println(lines[0])
+
 	entriesWithSignatures := regexp.MustCompile("(?m)^=").Split(strings.Join(lines, "\n"), -1)
 	// Remove the blank entry that is matched
 	if len(entriesWithSignatures) > 0 && len(entriesWithSignatures[0]) == 0 {
@@ -332,10 +389,6 @@ func main() {
 			Name:  "init",
 			Usage: "Create a Trustedb file",
 			Flags: []cli.Flag{
-				cli.BoolFlag{
-					Name:  "skiplast",
-					Usage: "Skip threshold check on last entry",
-				},
 				cli.StringFlag{
 					Name:   "trustfile",
 					Usage:  "Path to your trustfile",
@@ -348,9 +401,7 @@ func main() {
 					fmt.Println("Please specify a trustfile")
 					os.Exit(1)
 				}
-
-				err := verifyDbFile(trustfile, c.Bool("skiplast"))
-				if err != nil {
+				if err := createTrustfile(trustfile); err != nil {
 					fmt.Println(err)
 					os.Exit(1)
 				}
@@ -358,16 +409,46 @@ func main() {
 		},
 		{
 			Name:  "approve",
-			Usage: "Approve the addition of a key",
+			Usage: "Approve a pending key addition or removal request",
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:   "keyfile",
 					Usage:  "Path to your keyfile with a DER formatted private key",
 					EnvVar: "TRUSTEDB_KEYFILE",
 				},
+				cli.StringFlag{
+					Name:   "trustfile",
+					Usage:  "Path to your trustfile",
+					EnvVar: "TRUSTEDB_TRUSTFILE",
+				},
 			},
 			Action: func(c *cli.Context) {
-				fmt.Println("verifying ", c.Args().First())
+				keyfile := c.String("keyfile")
+				if len(keyfile) == 0 {
+					fmt.Println("Please specify a value for --keyfile")
+					os.Exit(1)
+				}
+				trustfile := c.String("trustfile")
+				if len(trustfile) == 0 {
+					fmt.Println("Please specify a value for --trustfile")
+					os.Exit(1)
+				}
+
+				if len(c.Args()) == 0 {
+					fmt.Println("Please specify a public key to approve")
+					os.Exit(1)
+				}
+				pubKey := c.Args()[0]
+
+				if len(identifier) == 0 {
+					fmt.Println("Please specify a value for --identifier")
+					os.Exit(1)
+				}
+				privKey, err := keyFromKeyFile(keyfile)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
 			},
 		},
 		{
@@ -393,37 +474,57 @@ func main() {
 		},
 		{
 			Name:  "request",
-			Usage: "Approve the addition of a key",
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:   "keyfile",
-					Usage:  "Path to your keyfile with a DER formatted private key",
-					EnvVar: "TRUSTEDB_KEYFILE",
+			Usage: "Request modification to the specified Trustfile",
+			Subcommands: []cli.Command{
+				{
+					Name:  "add",
+					Usage: "Request the addition of a key to the Trustfile",
+					Flags: []cli.Flag{
+						cli.StringFlag{
+							Name:   "keyfile",
+							Usage:  "Path to your keyfile with a DER formatted private key",
+							EnvVar: "TRUSTEDB_KEYFILE",
+						},
+						cli.StringFlag{
+							Name:   "trustfile",
+							Usage:  "Path to your trustfile",
+							EnvVar: "TRUSTEDB_TRUSTFILE",
+						},
+						cli.StringFlag{
+							Name:  "identifier",
+							Usage: "Human readable identifier for the key owner",
+						},
+					},
+					Action: func(c *cli.Context) {
+						keyfile := c.String("keyfile")
+						if len(keyfile) == 0 {
+							fmt.Println("Please specify a value for --keyfile")
+							os.Exit(1)
+						}
+						trustfile := c.String("trustfile")
+						if len(trustfile) == 0 {
+							fmt.Println("Please specify a value for --trustfile")
+							os.Exit(1)
+						}
+
+						identifier := c.String("identifier")
+						if len(identifier) == 0 {
+							fmt.Println("Please specify a value for --identifier")
+							os.Exit(1)
+						}
+
+						privKey, err := keyFromKeyFile(keyfile)
+						if err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						}
+
+						if err := addEntryToDbFile(*privKey, c.String("identifier"), trustfile); err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						}
+					},
 				},
-				cli.StringFlag{
-					Name:   "trustfile",
-					Usage:  "Path to your trustfile",
-					EnvVar: "TRUSTEDB_TRUSTFILE",
-				},
-			},
-			Action: func(c *cli.Context) {
-				keyfile := c.String("keyfile")
-				if len(keyfile) == 0 {
-					fmt.Println("Please specify a keyfile")
-					os.Exit(1)
-				}
-				trustfile := c.String("trustfile")
-				if len(trustfile) == 0 {
-					fmt.Println("Please specify a trustfile")
-					os.Exit(1)
-				}
-				privKey, err := keyFromKeyFile(keyfile)
-				if err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				}
-				fmt.Println(trustfile)
-				fmt.Println(hex.EncodeToString(privKey.PubKey().SerializeCompressed()))
 			},
 		},
 		{
