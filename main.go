@@ -492,6 +492,42 @@ func parseKeyEntryLine(l string) (*KeyEntry, error) {
 	return &keyEntry, nil
 }
 
+func parseRevEntryLine(l string) (*RevealEntry, *btcec.PublicKey, error) {
+	f := strings.Fields(l)
+	if len(f)-1 != reflect.ValueOf(&RevealEntry{}).Elem().NumField() {
+		return nil, nil, errors.New("Malformed Reveal Entry Line")
+	}
+
+	p, s := f[1], f[2]
+
+	pubKeyBytes, err := hex.DecodeString(p)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sigBytes, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sig, err := parseSigEntryLines([]string{"s= " + s})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pk, err := checkSigAndRecoverCompact(sig[0], string(pubKeyBytes))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	revEntry := RevealEntry{
+		PubKeyBytes:     pk.SerializeCompressed(),
+		CompactSigBytes: sigBytes,
+	}
+
+	return &revEntry, pk, nil
+}
+
 func parseSigEntryLines(lines []string) ([]SigEntry, error) {
 	e := []SigEntry{}
 
