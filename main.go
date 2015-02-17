@@ -548,11 +548,13 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		if err != nil {
 			return nil, nil, err
 		}
+		keyEntries = append(keyEntries, *keyEntry)
 
-		sigEntries, err := parseSigEntryLines(sigEntryLines)
+		sigs, err := parseSigEntryLines(sigEntryLines)
 		if err != nil {
 			return nil, nil, err
 		}
+		sigEntries = append(sigEntries, sigs)
 	}
 
 	return keyEntries, sigEntries, nil
