@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -30,11 +29,6 @@ type SigEntry struct {
 
 type KeyDiscoveryRevealEntry struct {
 	PubKeyBytes []byte
-}
-
-type KeyDiscoveryEntry struct {
-	Sha256PubKeyBytes []byte
-	SigBytes          []byte
 }
 
 type KeyEntry struct {
@@ -530,7 +524,6 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 	// Keep track of the log entries
 	keyEntries := []KeyEntry{}
 	sigEntries := [][]SigEntry{}
-	//disEntries := [][]KeyDiscoveryEntry{}
 
 	if len(lines) == 0 {
 		return keyEntries, sigEntries, nil
