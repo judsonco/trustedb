@@ -533,7 +533,8 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 	}
 
 	entriesWithSignatures := regexp.MustCompile("(?m)^=").Split(strings.Join(lines, "\n"), -1)
-	// Remove the blank entry that is returned for some reason
+	// The first element is reserved for configuration
+	// we're not using that now, so just dispose of it
 	if len(entriesWithSignatures) > 0 && len(entriesWithSignatures[0]) == 0 {
 		_, entriesWithSignatures = entriesWithSignatures[0], entriesWithSignatures[1:]
 	}
