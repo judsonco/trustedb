@@ -380,18 +380,21 @@ func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey,
 			return err
 		}
 
-		tpath, err := filepath.Abs(filepath.Dir(file.Name()))
-		if err != nil {
-			return err
-		}
+		tpath := file.Name()
 		defer os.Remove(file.Name())
 
 		// Copy the trustfile
 		if err := cp(tpath, path); err != nil {
 			return err
 		}
+		// Reopen file append-only
+		tfile, err := os.OpenFile(tpath, os.O_RDWR|os.O_APPEND, 0660)
+		if err != nil {
+			return err
+		}
+
 		// Create the signature
-		w := bufio.NewWriter(file)
+		w := bufio.NewWriter(tfile)
 
 		sig, err := btcec.SignCompact(btcec.S256(), key, sha256ByteSum([]byte(content)), true)
 		if err != nil {
