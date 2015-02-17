@@ -215,16 +215,15 @@ func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (signer
 		return map[string]*btcec.PublicKey{}, -1, errors.New("Index out of bounds")
 	}
 
+	// Special case for first bootstrap sig
+	if index == 0 && len(keys) == 1 && len(sigs[0]) == 0 {
+		return map[string]*btcec.PublicKey{}, 1, nil
+	}
+
 	required = -1
 	for i, entry := range keys {
 		// Make sure the content is the same
 		pk, _ := btcec.ParsePubKey(entry.DiscoveryEntry.PubKeyBytes, btcec.S256())
-		compHex := hex.EncodeToString(pk.SerializeCompressed())
-
-		// Special case for the first key. So you can approve yourself
-		if len(signers) == 0 {
-			signers[compHex] = pk
-		}
 
 		required = 2
 		if len(signers) < 2 {
