@@ -113,6 +113,31 @@ func createTrustfile(path string) error {
 	return nil
 }
 
+func verifyNoDoubleSignatures(keys []KeyEntry, entrySigs [][]SigEntry) error {
+	for i, sigs := range entrySigs {
+		content, err := contentForEntryIndex(i, keys, entrySigs)
+		if err != nil {
+			return err
+		}
+
+		s := map[string]int{}
+		for _, sig := range sigs {
+			if pk, err := checkSigAndRecoverCompact(sig, content); err != nil {
+				return err
+			} else {
+				k := hex.EncodeToString(pk.SerializeCompressed())
+				if _, ok := s[k]; ok {
+					return errors.New("Double signature for entry")
+				} else {
+					s[k] = 1
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func verifyNoDoubleAdd(keys []KeyEntry) error {
 	logKeys := map[string]int{}
 
@@ -307,6 +332,10 @@ func verifyDbFile(path string, skipLast bool) error {
 	}
 
 	if err := verifyNoDoubleAdd(keys); err != nil {
+		return err
+	}
+
+	if err := verifyNoDoubleSignatures(keys, sigs); err != nil {
 		return err
 	}
 
