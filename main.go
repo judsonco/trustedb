@@ -27,15 +27,16 @@ type SigEntry struct {
 	SigBytes []byte
 }
 
-type KeyDiscoveryRevealEntry struct {
-	PubKeyBytes []byte
+type RevealEntry struct {
+	PubKeyBytes     []byte
+	CompactSigBytes []byte
 }
 
 type KeyEntry struct {
 	Cmd                     string
 	Identifier              string
 	DoubleSha256PubKeyBytes []byte
-	DiscoveryEntry          KeyDiscoveryRevealEntry
+	RevealEntry             RevealEntry
 }
 
 func readLines(path string) ([]string, error) {
@@ -130,7 +131,7 @@ func verifyNoDoubleAdd(keys []KeyEntry) error {
 	}
 
 	for _, key := range keys {
-		p, err := btcec.ParsePubKey(key.DiscoveryEntry.PubKeyBytes, btcec.S256())
+		p, err := btcec.ParsePubKey(key.RevealEntry.PubKeyBytes, btcec.S256())
 		if err != nil {
 			return err
 		}
@@ -166,7 +167,7 @@ func contentForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (conten
 	content = ""
 	for i, entry := range keys {
 		// Make sure the content is the same
-		pk, _ := btcec.ParsePubKey(entry.DiscoveryEntry.PubKeyBytes, btcec.S256())
+		pk, _ := btcec.ParsePubKey(entry.RevealEntry.PubKeyBytes, btcec.S256())
 		compHex := hex.EncodeToString(pk.SerializeCompressed())
 		if i > 0 {
 			content += "\n"
@@ -217,7 +218,7 @@ func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (signer
 	required = -1
 	for i, entry := range keys {
 		// Make sure the content is the same
-		pk, _ := btcec.ParsePubKey(entry.DiscoveryEntry.PubKeyBytes, btcec.S256())
+		pk, _ := btcec.ParsePubKey(entry.RevealEntry.PubKeyBytes, btcec.S256())
 
 		required = 2
 		if len(signers) < 2 {
