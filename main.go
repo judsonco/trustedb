@@ -71,6 +71,8 @@ func createKeyfile(path string) error {
 	w := bufio.NewWriter(file)
 	fmt.Fprintln(w, hex.EncodeToString(k.Serialize()))
 
+	fmt.Println(hex.EncodeToString(k.PubKey().SerializeCompressed()))
+
 	return w.Flush()
 }
 
@@ -787,23 +789,102 @@ func main() {
 					os.Exit(1)
 				}
 
-				if err := verifyDbFile(trustfile, c.Bool("skiplast")); err != nil {
+				if err := verifyDbFile(trustfile, true); err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+
+				keys, sigs, err := parseDbFile(trustfile)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+
+				if signers, _, err := signersForEntryIndex(-1, keys, sigs); err != nil {
 					fmt.Println(err)
 					os.Exit(1)
 				} else {
-					keys, sigs, err := parseDbFile(trustfile)
-					if err != nil {
-						fmt.Println(err)
+					for key, _ := range signers {
+						fmt.Println(key)
+					}
+				}
+			},
+		},
+		{
+			Name:  "checksig",
+			Usage: "Check that the signature comes from an approved deployer",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "trustfile",
+					Usage:  "Path to your trustfile",
+					EnvVar: "TRUSTEDB_TRUSTFILE",
+				},
+			},
+			Action: func(c *cli.Context) {
+				trustfile := c.String("trustfile")
+				if len(trustfile) == 0 {
+					fmt.Println("Please specify a trustfile")
+					os.Exit(1)
+				}
+
+				if err := verifyDbFile(trustfile, true); err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+
+				keys, sigs, err := parseDbFile(trustfile)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+
+				if signers, _, err := signersForEntryIndex(-1, keys, sigs); err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				} else {
+					if len(signers) == 0 {
+						fmt.Println("Signer not approved")
 						os.Exit(1)
 					}
 
-					if signers, _, err := signersForEntryIndex(-1, keys, sigs); err != nil {
-						fmt.Println(err)
+					sig := SigEntry{}
+					content := ""
+					if len(c.Args()) == 0 {
+						fmt.Println("Must specify the plaintext content and hex encoded signature")
+						os.Exit(1)
+					} else if len(c.Args()) == 1 {
+						bytes, err := ioutil.ReadAll(os.Stdin)
+						if len(bytes) == 0 {
+							fmt.Println("Must specify the plaintext content and hex encoded signature")
+							os.Exit(1)
+						}
+						content = string(bytes)
+						sigs, err := parseSigEntryLines([]string{"s= " + c.Args()[0]})
+						if err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						}
+						sig = sigs[0]
+					} else if len(c.Args()) == 2 {
+						content = c.Args()[0]
+						sigs, err := parseSigEntryLines([]string{"s= " + c.Args()[1]})
+						if err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						}
+						sig = sigs[0]
+					}
+					pk, err := checkSigAndRecoverCompact(sig, content)
+					if err != nil {
+						fmt.Println("Must specify the plaintext content and hex encoded signature")
+						os.Exit(1)
+					}
+					if _, ok := signers[hex.EncodeToString(pk.SerializeCompressed())]; !ok {
+						fmt.Println("Signer not approved")
 						os.Exit(1)
 					} else {
-						for key, _ := range signers {
-							fmt.Println(key)
-						}
+						fmt.Println("Success!")
+						os.Exit(0)
 					}
 				}
 			},
