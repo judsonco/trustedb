@@ -364,7 +364,7 @@ func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey,
 		}
 
 		// Verify that the private key is correct
-		if bytes.Compare(keys[lastEntry].DoubleSha256PubKeyBytes, sha256ByteSum(sha256ByteSum(pubKey.SerializeCompressed()))) == 0 {
+		if bytes.Compare(keys[lastEntry].DoubleSha256PubKeyBytes, sha256ByteSum(sha256ByteSum(pubKey.SerializeCompressed()))) != 0 {
 			return errors.New("The supplied public key does not match the key to be approved")
 		}
 
