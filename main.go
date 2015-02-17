@@ -535,7 +535,6 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 	if len(lines) == 0 {
 		return keyEntries, sigEntries, nil
 	}
-	fmt.Println(lines[0])
 
 	entriesWithSignatures := regexp.MustCompile("(?m)^=").Split(strings.Join(lines, "\n"), -1)
 	// Remove the blank entry that is returned for some reason
@@ -562,8 +561,6 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-
-		fmt.Println(keyEntry, disEntryLines, sigEntries, revEntryLines)
 	}
 
 	return keyEntries, sigEntries, nil
