@@ -517,29 +517,6 @@ func parseSigEntryLines(lines []string) ([]SigEntry, error) {
 	return e, nil
 }
 
-func parseKeyDiscoveryLines(lines []string) ([]KeyDiscoveryEntry, error) {
-	e := []KeyDiscoveryEntry{}
-
-	for _, l := range lines {
-		f := strings.Fields(l)
-		if len(f) != reflect.ValueOf(&KeyDiscoveryEntry{}).Elem().NumField() {
-			return nil, errors.New("Malformed Key Discovery Line")
-		}
-
-		sha256PubKey, sig := f[1], f[2]
-
-		sha256PubKeyBytes, _ := hex.DecodeString(sha256PubKey)
-		sigBytes, _ := hex.DecodeString(sig)
-
-		e = append(e, KeyDiscoveryEntry{
-			Sha256PubKeyBytes: sha256PubKeyBytes,
-			SigBytes:          sigBytes,
-		})
-	}
-
-	return e, nil
-}
-
 func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 	path, err := homedir.Expand(path)
 	if err != nil {
