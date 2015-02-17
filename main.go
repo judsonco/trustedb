@@ -27,16 +27,10 @@ type SigEntry struct {
 	SigBytes []byte
 }
 
-type RevealEntry struct {
-	PubKeyBytes     []byte
-	CompactSigBytes []byte
-}
-
 type KeyEntry struct {
 	Cmd                     string
 	Identifier              string
 	DoubleSha256PubKeyBytes []byte
-	RevealEntry             RevealEntry
 }
 
 func readLines(path string) ([]string, error) {
@@ -131,11 +125,7 @@ func verifyNoDoubleAdd(keys []KeyEntry) error {
 	}
 
 	for _, key := range keys {
-		p, err := btcec.ParsePubKey(key.RevealEntry.PubKeyBytes, btcec.S256())
-		if err != nil {
-			return err
-		}
-		c := hex.EncodeToString(p.SerializeCompressed())
+		c := hex.EncodeToString(key.DoubleSha256PubKeyBytes)
 		_, hasKey := logKeys[c]
 		if hasKey {
 			if key.Cmd == "+" {
@@ -167,15 +157,13 @@ func contentForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (conten
 	content = ""
 	for i, entry := range keys {
 		// Make sure the content is the same
-		pk, _ := btcec.ParsePubKey(entry.RevealEntry.PubKeyBytes, btcec.S256())
-		compHex := hex.EncodeToString(pk.SerializeCompressed())
 		if i > 0 {
 			content += "\n"
 		}
 		if entry.Cmd == "+" {
-			content += strings.Join([]string{"=", entry.Cmd, " ", entry.Identifier, " ", compHex}, "")
+			content += strings.Join([]string{"=" + entry.Cmd, entry.Identifier, hex.EncodeToString(entry.DoubleSha256PubKeyBytes)}, "")
 		} else if entry.Cmd == "-" {
-			content += strings.Join([]string{"=", entry.Cmd, " ", compHex}, "")
+			content += strings.Join([]string{"=" + entry.Cmd, entry.Identifier}, "")
 		}
 
 		// Don't include the sigs in the last entry
@@ -201,25 +189,22 @@ func contentForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (conten
 	return content, nil
 }
 
-func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (signers map[string]*btcec.PublicKey, required int, err error) {
+func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (signers map[string]bool, required int, err error) {
 	if len(keys) == 0 {
 		return
 	}
 
 	if index > len(keys)-1 {
-		return map[string]*btcec.PublicKey{}, -1, errors.New("Index out of bounds")
+		return map[string]bool{}, -1, errors.New("Index out of bounds")
 	}
 
 	// Special case for first bootstrap sig
 	if index == 0 && len(keys) == 1 && len(sigs[0]) == 0 {
-		return map[string]*btcec.PublicKey{}, 1, nil
+		return map[string]bool{}, 1, nil
 	}
 
 	required = -1
 	for i, entry := range keys {
-		// Make sure the content is the same
-		pk, _ := btcec.ParsePubKey(entry.RevealEntry.PubKeyBytes, btcec.S256())
-
 		required = 2
 		if len(signers) < 2 {
 			required = len(signers)
@@ -235,19 +220,21 @@ func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (signer
 
 		content, err := contentForEntryIndex(i, keys, sigs)
 		if err != nil {
-			return map[string]*btcec.PublicKey{}, -1, err
+			return map[string]bool{}, -1, err
 		}
 
 		numSuccessfulSigs := 0
 		for _, sig := range sigs[i] {
-			if checkSig(sig, content, signers) {
-				numSuccessfulSigs += 1
-				if numSuccessfulSigs >= required {
-					k := hex.EncodeToString(pk.SerializeCompressed())
-					if entry.Cmd == "+" {
-						signers[k] = pk
-					} else if entry.Cmd == "-" {
-						delete(signers, k)
+			if pk, err := checkSigAndRecoverCompact(sig, content); err != nil {
+				if _, ok := signers[hex.EncodeToString(doubleSha256Sum(pk.SerializeCompressed()))]; ok {
+					numSuccessfulSigs += 1
+					if numSuccessfulSigs >= required {
+						k := hex.EncodeToString(entry.DoubleSha256PubKeyBytes)
+						if entry.Cmd == "+" {
+							signers[k] = true
+						} else if entry.Cmd == "-" {
+							delete(signers, k)
+						}
 					}
 				}
 			}
@@ -413,24 +400,8 @@ func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey,
 			return err
 		}
 
-		if err := verifySequentialEntrySigsAtIndex(len(tkeys)-1, tkeys, tsigs); err == nil {
-			sig, err := btcec.SignCompact(btcec.S256(), key, sha256ByteSum([]byte(pubKey.SerializeCompressed())), true)
-			if err != nil {
-				return err
-			}
-
-			_, ferr := fmt.Fprintln(w, strings.Join([]string{
-				"k=",
-				hex.EncodeToString(pubKey.SerializeCompressed()),
-				hex.EncodeToString(sig),
-			}, " "))
-			if ferr != nil {
-				return ferr
-			}
-
-			if err := w.Flush(); err != nil {
-				return err
-			}
+		if err := verifySequentialEntrySigsAtIndex(len(tkeys)-1, tkeys, tsigs); err != nil {
+			return err
 		}
 
 		// Copy the trustfile
@@ -481,7 +452,7 @@ func sha256ByteSum(b []byte) []byte {
 
 func parseKeyEntryLine(l string) (*KeyEntry, error) {
 	f := strings.Fields(l)
-	if len(f) != reflect.ValueOf(&KeyEntry{}).Elem().NumField()-1 {
+	if len(f) != reflect.ValueOf(&KeyEntry{}).Elem().NumField() {
 		return nil, errors.New("Malformed Key Entry Line")
 	}
 
@@ -494,42 +465,6 @@ func parseKeyEntryLine(l string) (*KeyEntry, error) {
 	}
 
 	return &keyEntry, nil
-}
-
-func parseRevEntryLine(l string) (*RevealEntry, *btcec.PublicKey, error) {
-	f := strings.Fields(l)
-	if len(f)-1 != reflect.ValueOf(&RevealEntry{}).Elem().NumField() {
-		return nil, nil, errors.New("Malformed Reveal Entry Line")
-	}
-
-	p, s := f[1], f[2]
-
-	pubKeyBytes, err := hex.DecodeString(p)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	sigBytes, err := hex.DecodeString(s)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	sig, err := parseSigEntryLines([]string{"s= " + s})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pk, err := checkSigAndRecoverCompact(sig[0], string(pubKeyBytes))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	revEntry := RevealEntry{
-		PubKeyBytes:     pk.SerializeCompressed(),
-		CompactSigBytes: sigBytes,
-	}
-
-	return &revEntry, pk, nil
 }
 
 func parseSigEntryLines(lines []string) ([]SigEntry, error) {
@@ -576,10 +511,9 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		_, entriesWithSignatures = entriesWithSignatures[0], entriesWithSignatures[1:]
 	}
 
-	for i, entryWithSignatures := range entriesWithSignatures {
+	for _, entryWithSignatures := range entriesWithSignatures {
 		keyEntryLine := regexp.MustCompile("(?m)^[+-].*$").FindAllString(entryWithSignatures, -1)[0]
 		sigEntryLines := regexp.MustCompile("(?m)^s=.*$").FindAllString(entryWithSignatures, -1)
-		revEntryLines := regexp.MustCompile("(?m)^k=.*$").FindAllString(entryWithSignatures, -1)
 
 		sigs, err := parseSigEntryLines(sigEntryLines)
 		if err != nil {
@@ -591,38 +525,7 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-
-		if len(revEntryLines) == 1 {
-			if revEntry, pk, err := parseRevEntryLine(revEntryLines[0]); err != nil {
-				return nil, nil, err
-			} else {
-				// Check if the reveal matches the double sha key
-				if bytes.Compare(sha256ByteSum(sha256ByteSum(revEntry.PubKeyBytes)), keyEntry.DoubleSha256PubKeyBytes) == 0 {
-					if len(keyEntries) > 0 {
-						// Check that the sig is from an approved signer (or the only signer)
-						if signers, _, err := signersForEntryIndex(i, keyEntries, sigEntries); err != nil {
-							return nil, nil, err
-						} else {
-							if _, ok := signers[hex.EncodeToString(pk.SerializeCompressed())]; ok {
-								keyEntry.RevealEntry = *revEntry
-								keyEntries = append(keyEntries, *keyEntry)
-							} else {
-								return nil, nil, errors.New("Reveal wasn't signed by an authorized signer")
-							}
-						}
-					} else {
-						if bytes.Compare(sha256ByteSum(sha256ByteSum(pk.SerializeCompressed())), keyEntry.DoubleSha256PubKeyBytes) == 0 {
-							keyEntry.RevealEntry = *revEntry
-							keyEntries = append(keyEntries, *keyEntry)
-						} else {
-							return nil, nil, errors.New("Reveal wasn't signed by an authorized signer")
-						}
-					}
-				}
-			}
-		} else if len(revEntryLines) > 1 {
-			return nil, nil, errors.New("Each KeyEntry must only reveal once")
-		}
+		keyEntries = append(keyEntries, *keyEntry)
 	}
 
 	return keyEntries, sigEntries, nil
