@@ -359,7 +359,7 @@ func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey,
 		}
 
 		// Verify that the private key is correct
-		if bytes.Compare(keys[lastEntry].DoubleSha256PubKeyBytes, sha256ByteSum(sha256ByteSum(pubKey.SerializeCompressed()))) != 0 {
+		if bytes.Compare(keys[lastEntry].DoubleSha256PubKeyBytes, doubleSha256Sum(pubKey.SerializeCompressed())) != 0 {
 			return errors.New("The supplied public key does not match the key to be approved")
 		}
 
@@ -458,7 +458,7 @@ func addEntryToDbFile(key *btcec.PrivateKey, identifier string, path string) err
 	_, fileErr := fmt.Fprintln(w, strings.Join([]string{
 		"=+",
 		strings.Replace(identifier, " ", "", -1),
-		hex.EncodeToString(sha256ByteSum(sha256ByteSum(key.PubKey().SerializeCompressed()))),
+		hex.EncodeToString(doubleSha256Sum(key.PubKey().SerializeCompressed())),
 	}, " "))
 
 	if fileErr != nil {
@@ -466,6 +466,10 @@ func addEntryToDbFile(key *btcec.PrivateKey, identifier string, path string) err
 	}
 
 	return w.Flush()
+}
+
+func doubleSha256Sum(b []byte) []byte {
+	return sha256ByteSum(sha256ByteSum(b))
 }
 
 func sha256ByteSum(b []byte) []byte {
