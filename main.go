@@ -587,7 +587,6 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		keyEntries = append(keyEntries, *keyEntry)
 
 		if len(revEntryLines) == 1 {
 			if revEntry, pk, err := parseRevEntryLine(revEntryLines[0]); err != nil {
@@ -620,7 +619,6 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		} else if len(revEntryLines) > 1 {
 			return nil, nil, errors.New("Each KeyEntry must only reveal once")
 		}
-		sigEntries = append(sigEntries, sigs)
 	}
 
 	return keyEntries, sigEntries, nil
