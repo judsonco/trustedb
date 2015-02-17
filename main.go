@@ -572,14 +572,16 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		_, entriesWithSignatures = entriesWithSignatures[0], entriesWithSignatures[1:]
 	}
 
-	for _, entryWithSignatures := range entriesWithSignatures {
+	for i, entryWithSignatures := range entriesWithSignatures {
 		keyEntryLine := regexp.MustCompile("(?m)^[+-].*$").FindAllString(entryWithSignatures, -1)[0]
 		sigEntryLines := regexp.MustCompile("(?m)^s=.*$").FindAllString(entryWithSignatures, -1)
 		revEntryLines := regexp.MustCompile("(?m)^k=.*$").FindAllString(entryWithSignatures, -1)
 
-		if len(revEntryLines) > 1 {
-			return nil, nil, errors.New("Each KeyEntry must only reveal once")
+		sigs, err := parseSigEntryLines(sigEntryLines)
+		if err != nil {
+			return nil, nil, err
 		}
+		sigEntries = append(sigEntries, sigs)
 
 		keyEntry, err := parseKeyEntryLine(keyEntryLine)
 		if err != nil {
@@ -587,9 +589,36 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		}
 		keyEntries = append(keyEntries, *keyEntry)
 
-		sigs, err := parseSigEntryLines(sigEntryLines)
-		if err != nil {
-			return nil, nil, err
+		if len(revEntryLines) == 1 {
+			if revEntry, pk, err := parseRevEntryLine(revEntryLines[0]); err != nil {
+				return nil, nil, err
+			} else {
+				// Check if the reveal matches the double sha key
+				if bytes.Compare(sha256ByteSum(sha256ByteSum(revEntry.PubKeyBytes)), keyEntry.DoubleSha256PubKeyBytes) == 0 {
+					if len(keyEntries) > 0 {
+						// Check that the sig is from an approved signer (or the only signer)
+						if signers, _, err := signersForEntryIndex(i, keyEntries, sigEntries); err != nil {
+							return nil, nil, err
+						} else {
+							if _, ok := signers[hex.EncodeToString(pk.SerializeCompressed())]; ok {
+								keyEntry.RevealEntry = *revEntry
+								keyEntries = append(keyEntries, *keyEntry)
+							} else {
+								return nil, nil, errors.New("Reveal wasn't signed by an authorized signer")
+							}
+						}
+					} else {
+						if bytes.Compare(sha256ByteSum(sha256ByteSum(pk.SerializeCompressed())), keyEntry.DoubleSha256PubKeyBytes) == 0 {
+							keyEntry.RevealEntry = *revEntry
+							keyEntries = append(keyEntries, *keyEntry)
+						} else {
+							return nil, nil, errors.New("Reveal wasn't signed by an authorized signer")
+						}
+					}
+				}
+			}
+		} else if len(revEntryLines) > 1 {
+			return nil, nil, errors.New("Each KeyEntry must only reveal once")
 		}
 		sigEntries = append(sigEntries, sigs)
 	}
