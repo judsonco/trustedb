@@ -536,8 +536,7 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 	}
 
 	for _, entryWithSignatures := range entriesWithSignatures {
-		keyEntryLine := regexp.MustCompile("(?m)^=[+-].*$").FindAllString(entryWithSignatures, -1)[0]
-		disEntryLines := regexp.MustCompile("(?m)^d=.*$").FindAllString(entryWithSignatures, -1)
+		keyEntryLine := regexp.MustCompile("(?m)^[+-].*$").FindAllString(entryWithSignatures, -1)[0]
 		sigEntryLines := regexp.MustCompile("(?m)^s=.*$").FindAllString(entryWithSignatures, -1)
 		revEntryLines := regexp.MustCompile("(?m)^k=.*$").FindAllString(entryWithSignatures, -1)
 
