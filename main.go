@@ -214,24 +214,25 @@ func contentForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (conten
 	return content, nil
 }
 
-func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (signers map[string]bool, required int, err error) {
+func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (map[string]bool, int, error) {
 	if len(keys) == 0 {
-		return
+		return map[string]bool{}, 1, nil
 	}
 
-	if index > len(keys)-1 {
+	if index > len(keys)-1 || index < -1 {
 		return map[string]bool{}, -1, errors.New("Index out of bounds")
 	}
 
 	// Special case for first bootstrap sig
-	if index == 0 && len(keys) == 1 && len(sigs[0]) == 0 {
+	if len(keys) == 1 && len(sigs[0]) == 0 {
 		return map[string]bool{}, 1, nil
 	}
 
-	required = -1
+	signers := map[string]bool{}
+	required := -1
 	for i, entry := range keys {
-		required = 2
-		if len(signers) < 2 {
+		required = 3
+		if len(signers) < required {
 			required = len(signers)
 		}
 
@@ -250,8 +251,9 @@ func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (signer
 
 		numSuccessfulSigs := 0
 		for _, sig := range sigs[i] {
-			if pk, err := checkSigAndRecoverCompact(sig, content); err != nil {
-				if _, ok := signers[hex.EncodeToString(doubleSha256Sum(pk.SerializeCompressed()))]; ok {
+			if pk, err := checkSigAndRecoverCompact(sig, content); err == nil {
+				_, ok := signers[hex.EncodeToString(doubleSha256Sum(pk.SerializeCompressed()))]
+				if ok || (i == 0 && len(signers) == 0) {
 					numSuccessfulSigs += 1
 					if numSuccessfulSigs >= required {
 						k := hex.EncodeToString(entry.DoubleSha256PubKeyBytes)
@@ -424,12 +426,8 @@ func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey,
 			return err
 		}
 
-		tkeys, tsigs, err := parseDbFile(tpath)
-		if err != nil {
-			return err
-		}
-
-		if err := verifySequentialEntrySigsAtIndex(len(tkeys)-1, tkeys, tsigs); err != nil {
+		// Check to make sure the file is correct, skiping the last row
+		if err := verifyDbFile(tpath, true); err != nil {
 			return err
 		}
 
@@ -608,57 +606,62 @@ func main() {
 		{
 			Name:  "approve",
 			Usage: "Approve a pending key addition or removal request",
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:   "keyfile",
-					Usage:  "Path to your keyfile with a DER formatted private key",
-					EnvVar: "TRUSTEDB_KEYFILE",
+			Subcommands: []cli.Command{
+				{
+					Name: "addition",
+					Flags: []cli.Flag{
+						cli.StringFlag{
+							Name:   "keyfile",
+							Usage:  "Path to your keyfile with a DER formatted private key",
+							EnvVar: "TRUSTEDB_KEYFILE",
+						},
+						cli.StringFlag{
+							Name:   "trustfile",
+							Usage:  "Path to your trustfile",
+							EnvVar: "TRUSTEDB_TRUSTFILE",
+						},
+					},
+					Action: func(c *cli.Context) {
+						keyfile := c.String("keyfile")
+						if len(keyfile) == 0 {
+							fmt.Println("Please specify a value for --keyfile")
+							os.Exit(1)
+						}
+						trustfile := c.String("trustfile")
+						if len(trustfile) == 0 {
+							fmt.Println("Please specify a value for --trustfile")
+							os.Exit(1)
+						}
+
+						if len(c.Args()) == 0 {
+							fmt.Println("Please specify a hex encoded public key to approve")
+							os.Exit(1)
+						}
+						hexPubKeyString := c.Args()[0]
+
+						privKey, err := keyFromKeyFile(keyfile)
+						if err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						}
+
+						pubKeyBytes, err := hex.DecodeString(hexPubKeyString)
+						if err != nil {
+							fmt.Println("Unable to parse Public Key")
+							os.Exit(1)
+						}
+
+						if pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256()); err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						} else {
+							if err := approveLastAdditionInDbFile(pubKey, privKey, trustfile); err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+						}
+					},
 				},
-				cli.StringFlag{
-					Name:   "trustfile",
-					Usage:  "Path to your trustfile",
-					EnvVar: "TRUSTEDB_TRUSTFILE",
-				},
-			},
-			Action: func(c *cli.Context) {
-				keyfile := c.String("keyfile")
-				if len(keyfile) == 0 {
-					fmt.Println("Please specify a value for --keyfile")
-					os.Exit(1)
-				}
-				trustfile := c.String("trustfile")
-				if len(trustfile) == 0 {
-					fmt.Println("Please specify a value for --trustfile")
-					os.Exit(1)
-				}
-
-				if len(c.Args()) == 0 {
-					fmt.Println("Please specify a hex encoded public key to approve")
-					os.Exit(1)
-				}
-				hexPubKeyString := c.Args()[0]
-
-				privKey, err := keyFromKeyFile(keyfile)
-				if err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				}
-
-				pubKeyBytes, err := hex.DecodeString(hexPubKeyString)
-				if err != nil {
-					fmt.Println("Unable to parse Public Key")
-					os.Exit(1)
-				}
-
-				if pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256()); err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				} else {
-					if err := approveLastAdditionInDbFile(pubKey, privKey, trustfile); err != nil {
-						fmt.Println(err)
-						os.Exit(1)
-					}
-				}
 			},
 		},
 		{
@@ -687,7 +690,7 @@ func main() {
 			Usage: "Request modification to the specified Trustfile",
 			Subcommands: []cli.Command{
 				{
-					Name:  "add",
+					Name:  "addition",
 					Usage: "Request the addition of a key to the Trustfile",
 					Flags: []cli.Flag{
 						cli.StringFlag{
@@ -763,6 +766,44 @@ func main() {
 					os.Exit(1)
 				} else {
 					fmt.Println("Success!")
+				}
+			},
+		},
+		{
+			Name:  "signers",
+			Usage: "List the approved signers hashes",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "trustfile",
+					Usage:  "Path to your trustfile",
+					EnvVar: "TRUSTEDB_TRUSTFILE",
+				},
+			},
+			Action: func(c *cli.Context) {
+				trustfile := c.String("trustfile")
+				if len(trustfile) == 0 {
+					fmt.Println("Please specify a trustfile")
+					os.Exit(1)
+				}
+
+				if err := verifyDbFile(trustfile, c.Bool("skiplast")); err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				} else {
+					keys, sigs, err := parseDbFile(trustfile)
+					if err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					}
+
+					if signers, _, err := signersForEntryIndex(-1, keys, sigs); err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					} else {
+						for key, _ := range signers {
+							fmt.Println(key)
+						}
+					}
 				}
 			},
 		},
