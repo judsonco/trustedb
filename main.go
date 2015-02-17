@@ -375,7 +375,7 @@ func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey,
 		}
 
 		// Create a tmp
-		file, err := ioutil.TempFile(os.TempDir(), "prefix")
+		file, err := ioutil.TempFile(os.TempDir(), "trustedb")
 		if err != nil {
 			return err
 		}
