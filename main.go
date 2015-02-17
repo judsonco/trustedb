@@ -126,6 +126,15 @@ func createTrustfile(path string) error {
 
 func verifyNoDoubleAdd(keys []KeyEntry) error {
 	logKeys := map[string]int{}
+
+	if len(keys) == 1 {
+		if keys[0].Cmd == "+" {
+			return nil
+		} else {
+			return errors.New("An entry must be added before it may be removed")
+		}
+	}
+
 	for _, key := range keys {
 		p, err := btcec.ParsePubKey(key.DiscoveryEntry.PubKeyBytes, btcec.S256())
 		if err != nil {
