@@ -482,7 +482,7 @@ func sha256ByteSum(b []byte) []byte {
 
 func parseKeyEntryLine(l string) (*KeyEntry, error) {
 	f := strings.Fields(l)
-	if len(f) != reflect.ValueOf(&KeyEntry{}).Elem().NumField() {
+	if len(f) != reflect.ValueOf(&KeyEntry{}).Elem().NumField()-1 {
 		return nil, errors.New("Malformed Key Entry Line")
 	}
 
@@ -502,7 +502,7 @@ func parseSigEntryLines(lines []string) ([]SigEntry, error) {
 
 	for _, l := range lines {
 		f := strings.Fields(l)
-		if len(f) != reflect.ValueOf(&SigEntry{}).Elem().NumField() {
+		if len(f)-1 != reflect.ValueOf(&SigEntry{}).Elem().NumField() {
 			return nil, errors.New("Malformed Sig Entry Line")
 		}
 
