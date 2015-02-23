@@ -438,6 +438,90 @@ func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey,
 	}
 }
 
+func approveLastRemovalInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey, path string) error {
+	// Make sure we're working with a good DB
+	if err := verifyDbFile(path, true); err != nil {
+		return err
+	}
+
+	keys, sigs, err := parseDbFile(path)
+	if err != nil {
+		return err
+	}
+
+	if len(keys) == 0 {
+		return errors.New("The trustfile is empty")
+	}
+
+	// Make sure there's a pending action
+	lastEntry := len(keys) - 1
+	if err := verifySequentialEntrySigsAtIndex(lastEntry, keys, sigs); err == nil {
+		return errors.New("No pending addition to approve")
+	} else {
+		if keys[lastEntry].Cmd != "-" {
+			return errors.New("No pending removal to approve")
+		}
+
+		// Verify that the private key is correct
+		if bytes.Compare(keys[lastEntry].DoubleSha256PubKeyBytes, doubleSha256Sum(pubKey.SerializeCompressed())) != 0 {
+			return errors.New("The supplied public key does not match the key to be approved")
+		}
+
+		// Get the content to be signed
+		content, err := contentForEntryIndex(lastEntry, keys, sigs)
+		if err != nil {
+			return err
+		}
+
+		// Create a tmp
+		file, err := ioutil.TempFile(os.TempDir(), "trustedb")
+		if err != nil {
+			return err
+		}
+
+		tpath := file.Name()
+		defer os.Remove(file.Name())
+
+		// Copy the trustfile
+		if err := cp(tpath, path); err != nil {
+			return err
+		}
+		// Reopen file append-only
+		tfile, err := os.OpenFile(tpath, os.O_RDWR|os.O_APPEND, 0660)
+		if err != nil {
+			return err
+		}
+
+		// Create the signature
+		w := bufio.NewWriter(tfile)
+
+		sig, err := btcec.SignCompact(btcec.S256(), key, sha256ByteSum([]byte(content)), true)
+		if err != nil {
+			return err
+		}
+		_, ferr := fmt.Fprintln(w, strings.Join([]string{
+			"s=",
+			hex.EncodeToString(sig),
+		}, " "))
+
+		if ferr != nil {
+			return ferr
+		}
+
+		if err := w.Flush(); err != nil {
+			return err
+		}
+
+		// Check to make sure the file is correct, skiping the last row
+		if err := verifyDbFile(tpath, true); err != nil {
+			return err
+		}
+
+		// Copy the trustfile
+		return cp(path, tpath)
+	}
+}
+
 func addEntryToDbFile(key *btcec.PrivateKey, identifier string, path string) error {
 	if err := verifyDbFile(path, false); err != nil {
 		return err
@@ -457,6 +541,36 @@ func addEntryToDbFile(key *btcec.PrivateKey, identifier string, path string) err
 	w := bufio.NewWriter(file)
 	_, fileErr := fmt.Fprintln(w, strings.Join([]string{
 		"=+",
+		strings.Replace(identifier, " ", "", -1),
+		hex.EncodeToString(doubleSha256Sum(key.PubKey().SerializeCompressed())),
+	}, " "))
+
+	if fileErr != nil {
+		return fileErr
+	}
+
+	return w.Flush()
+}
+
+func removeEntryFromDbFile(key *btcec.PrivateKey, identifier string, path string) error {
+	if err := verifyDbFile(path, false); err != nil {
+		return err
+	}
+
+	path, err := homedir.Expand(path)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0660)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	w := bufio.NewWriter(file)
+	_, fileErr := fmt.Fprintln(w, strings.Join([]string{
+		"=-",
 		strings.Replace(identifier, " ", "", -1),
 		hex.EncodeToString(doubleSha256Sum(key.PubKey().SerializeCompressed())),
 	}, " "))
@@ -611,7 +725,8 @@ func main() {
 			Usage: "Approve a pending key addition or removal request",
 			Subcommands: []cli.Command{
 				{
-					Name: "addition",
+					Name:  "addition",
+					Usage: "Approve a pending addition",
 					Flags: []cli.Flag{
 						cli.StringFlag{
 							Name:   "keyfile",
@@ -665,11 +780,67 @@ func main() {
 						}
 					},
 				},
+				{
+					Name:  "removal",
+					Usage: "Approve a pending removal",
+					Flags: []cli.Flag{
+						cli.StringFlag{
+							Name:   "keyfile",
+							Usage:  "Path to your keyfile with a DER formatted private key",
+							EnvVar: "TRUSTEDB_KEYFILE",
+						},
+						cli.StringFlag{
+							Name:   "trustfile",
+							Usage:  "Path to your trustfile",
+							EnvVar: "TRUSTEDB_TRUSTFILE",
+						},
+					},
+					Action: func(c *cli.Context) {
+						keyfile := c.String("keyfile")
+						if len(keyfile) == 0 {
+							fmt.Println("Please specify a value for --keyfile")
+							os.Exit(1)
+						}
+						trustfile := c.String("trustfile")
+						if len(trustfile) == 0 {
+							fmt.Println("Please specify a value for --trustfile")
+							os.Exit(1)
+						}
+
+						if len(c.Args()) == 0 {
+							fmt.Println("Please specify a hex encoded public key to approve")
+							os.Exit(1)
+						}
+						hexPubKeyString := c.Args()[0]
+
+						privKey, err := keyFromKeyFile(keyfile)
+						if err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						}
+
+						pubKeyBytes, err := hex.DecodeString(hexPubKeyString)
+						if err != nil {
+							fmt.Println("Unable to parse Public Key")
+							os.Exit(1)
+						}
+
+						if pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256()); err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						} else {
+							if err := approveLastRemovalInDbFile(pubKey, privKey, trustfile); err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+						}
+					},
+				},
 			},
 		},
 		{
 			Name:  "create-key",
-			Usage: "Verify the integrity of a Trustedb file",
+			Usage: "Create a keyfile",
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:   "keyfile",
@@ -736,6 +907,55 @@ func main() {
 						}
 
 						if err := addEntryToDbFile(privKey, c.String("identifier"), trustfile); err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						}
+					},
+				},
+				{
+					Name:  "removal",
+					Usage: "Request the removal of a key from the Trustfile",
+					Flags: []cli.Flag{
+						cli.StringFlag{
+							Name:   "keyfile",
+							Usage:  "Path to your keyfile with a DER formatted private key",
+							EnvVar: "TRUSTEDB_KEYFILE",
+						},
+						cli.StringFlag{
+							Name:   "trustfile",
+							Usage:  "Path to your trustfile",
+							EnvVar: "TRUSTEDB_TRUSTFILE",
+						},
+						cli.StringFlag{
+							Name:  "identifier",
+							Usage: "Human readable identifier for the key owner",
+						},
+					},
+					Action: func(c *cli.Context) {
+						keyfile := c.String("keyfile")
+						if len(keyfile) == 0 {
+							fmt.Println("Please specify a value for --keyfile")
+							os.Exit(1)
+						}
+						trustfile := c.String("trustfile")
+						if len(trustfile) == 0 {
+							fmt.Println("Please specify a value for --trustfile")
+							os.Exit(1)
+						}
+
+						identifier := c.String("identifier")
+						if len(identifier) == 0 {
+							fmt.Println("Please specify a value for --identifier")
+							os.Exit(1)
+						}
+
+						privKey, err := keyFromKeyFile(keyfile)
+						if err != nil {
+							fmt.Println(err)
+							os.Exit(1)
+						}
+
+						if err := removeEntryFromDbFile(privKey, c.String("identifier"), trustfile); err != nil {
 							fmt.Println(err)
 							os.Exit(1)
 						}
