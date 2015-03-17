@@ -1,5 +1,5 @@
 # Cli tools
-gom 'github.com/codegangsta/cli'
+gom 'github.com/docopt/docopt-go'
 
 # Bitcoin EC Utils
 gom 'github.com/btcsuite/btcd/btcec'
