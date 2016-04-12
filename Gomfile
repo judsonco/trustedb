@@ -1,5 +1,5 @@
 # Cli tools
-gom 'github.com/docopt/docopt-go'
+gom 'github.com/jawher/mow.cli'
 
 # Bitcoin EC Utils
 gom 'github.com/btcsuite/btcd/btcec'
