@@ -747,13 +747,13 @@ Usage:
 			fmt.Println("Show public key")
 		})
 	})
-	cp.Command("add", "Create a Trustfile", func(cmd *cli.Cmd) {
+	cp.Command("add", "Add a key as a signer to a Trustfile", func(cmd *cli.Cmd) {
 		identity := cmd.StringArg("IDENTIFIER", "", "The public identifier to add", nil)
 	})
-	cp.Command("remove", "Create a Trustfile", func(cmd *cli.Cmd) {
+	cp.Command("revoke", "Revoke a key's signing privledges", func(cmd *cli.Cmd) {
 		identity := cmd.StringArg("IDENTIFIER", "", "The public identifier to remove", nil)
 	})
-	cp.Command("confirm", "Create a Trustfile", func(cmd *cli.Cmd) {
+	cp.Command("confirm", "Confirm an addition or revocation", func(cmd *cli.Cmd) {
 		identity := cmd.StringArg("IDENTIFIER", "", "The public identifier to confirm", nil)
 	})
 
