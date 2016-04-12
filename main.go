@@ -15,8 +15,8 @@ import (
 	"strings"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/codegangsta/cli"
 	"github.com/docopt/docopt-go"
+	"github.com/jawher/mow.cli"
 	"github.com/mitchellh/go-homedir"
 
 	// Autoload
@@ -716,10 +716,46 @@ Usage:
     key       Show or Create your trustedb key
     add       Add a key to the Trustfile
     remove    Remove a key from the Trustfile
-    confirm   Confirm a Trustfile addition or removal`
+    confirm   Confirm a Trustfile addition or removal
+
+  See 'trustedb help <command>' for more information on a specific command.`
 
 	arguments, _ := docopt.Parse(usage, nil, true, "Trustedb 0.0.1", true)
 	fmt.Println(arguments)
+
+	cp := cli.App("trustedb", "Trustedb.")
+	cp.String(StringOpt{
+		Name:   "k keyfile",
+		Value:  "~/.trustedb/default",
+		Desc:   "Location of keyfile to use for signing",
+		EnvVar: "TRUSTEDB_KEYFILE",
+	})
+	cp.String(StringOpt{
+		Name:   "t trustfile",
+		Value:  "./Trustfile",
+		Desc:   "Location of the Trustfile",
+		EnvVar: "TRUSTEDB_TRUSTFILE",
+	})
+	cp.Command("init", "Create a Trustfile", func(cmd *cli.Cmd) {
+		fmt.Println("Init!")
+	})
+	cp.Command("key", "Manage your signing key", func(cmd *cli.Cmd) {
+		cmd.Command("create", "Create a signing key", func(cmd *cli.Cmd) {
+			fmt.Println("Create Key")
+		})
+		cmd.Command("show", "Show public signing key", func(cmd *cli.Cmd) {
+			fmt.Println("Show public key")
+		})
+	})
+	cp.Command("add", "Create a Trustfile", func(cmd *cli.Cmd) {
+		identity := cmd.StringArg("IDENTIFIER", "", "The public identifier to add", nil)
+	})
+	cp.Command("remove", "Create a Trustfile", func(cmd *cli.Cmd) {
+		identity := cmd.StringArg("IDENTIFIER", "", "The public identifier to remove", nil)
+	})
+	cp.Command("confirm", "Create a Trustfile", func(cmd *cli.Cmd) {
+		identity := cmd.StringArg("IDENTIFIER", "", "The public identifier to confirm", nil)
+	})
 
 	app := cli.NewApp()
 	app.Name = "Trustedb"
