@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/docopt/docopt-go"
+	"github.com/btcsuite/btcutil/hdkeychain"
 	"github.com/jawher/mow.cli"
 	"github.com/mitchellh/go-homedir"
 
