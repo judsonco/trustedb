@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -61,6 +62,11 @@ func createKeyfile(path string) error {
 	lines, _ := readLines(path)
 	if len(lines) > 0 {
 		return errors.New("Won't overwrite file")
+	}
+
+	// Make the directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(path), os.ModePerm); err != nil {
+		return err
 	}
 
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
