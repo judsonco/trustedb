@@ -4,11 +4,11 @@ gom 'github.com/jawher/mow.cli'
 # Bitcoin EC Utils
 gom 'github.com/btcsuite/btcd/btcec'
 
+# Bitcoin bip32 key gen
+gom 'github.com/btcsuite/btcutil/hdkeychain'
+
 # Portable home directory
 gom 'github.com/mitchellh/go-homedir'
 
-# Git bindings
-gom 'gopkg.in/libgit2/git2go.v22'
-
 # DotEnv Support
-gom 'github.com/joho/godotenv'
+gom 'github.com/joho/godotenv/autoload'
