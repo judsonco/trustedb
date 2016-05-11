@@ -710,18 +710,20 @@ func keyFromKeyFile(path string) (*btcec.PrivateKey, error) {
 
 func main() {
 	cp := cli.App("trustedb", "Trustedb.")
-	cp.String(StringOpt{
-		Name:   "k keyfile",
-		Value:  "~/.trustedb/default",
-		Desc:   "Location of keyfile to use for signing",
-		EnvVar: "TRUSTEDB_KEYFILE",
-	})
-	cp.String(StringOpt{
-		Name:   "t trustfile",
-		Value:  "./Trustfile",
-		Desc:   "Location of the Trustfile",
-		EnvVar: "TRUSTEDB_TRUSTFILE",
-	})
+	var (
+		keyfile = cp.String(cli.StringOpt{
+			Name:   "k keyfile",
+			Value:  "~/.trustedb/default",
+			Desc:   "Location of keyfile",
+			EnvVar: "TRUSTEDB_KEYFILE",
+		})
+		trustfile = cp.String(cli.StringOpt{
+			Name:   "t trustfile",
+			Value:  "./Trustfile",
+			Desc:   "Location of Trustfile",
+			EnvVar: "TRUSTEDB_TRUSTFILE",
+		})
+	)
 	cp.Command("init", "Create a Trustfile", func(cmd *cli.Cmd) {
 		fmt.Println("Init!")
 	})
