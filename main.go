@@ -725,441 +725,470 @@ func main() {
 		})
 	)
 	cp.Command("init", "Create a Trustfile", func(cmd *cli.Cmd) {
-		fmt.Println("Init!")
+		cmd.Action = func() {
+			if len(*trustfile) == 0 {
+				fmt.Println("Please specify a trustfile")
+				os.Exit(1)
+			}
+			if err := createTrustfile(*trustfile); err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+		}
 	})
-	cp.Command("key", "Manage your signing key", func(cmd *cli.Cmd) {
-		cmd.Command("create", "Create a signing key", func(cmd *cli.Cmd) {
-			fmt.Println("Create Key")
-		})
-		cmd.Command("show", "Show public signing key", func(cmd *cli.Cmd) {
-			fmt.Println("Show public key")
-		})
-	})
-	cp.Command("add", "Add a key as a signer to a Trustfile", func(cmd *cli.Cmd) {
-		identity := cmd.StringArg("IDENTIFIER", "", "The public identifier to add", nil)
-	})
-	cp.Command("revoke", "Revoke a key's signing privledges", func(cmd *cli.Cmd) {
-		identity := cmd.StringArg("IDENTIFIER", "", "The public identifier to remove", nil)
-	})
-	cp.Command("confirm", "Confirm an addition or revocation", func(cmd *cli.Cmd) {
-		identity := cmd.StringArg("IDENTIFIER", "", "The public identifier to confirm", nil)
-	})
-
-	app := cli.NewApp()
-	app.Name = "Trustedb"
-	app.Usage = "Verifiable append-only file of trusted keys"
-	app.Commands = []cli.Command{
-		{
-			Name:  "init",
-			Usage: "Create a Trustedb file",
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:   "trustfile",
-					Usage:  "Path to your trustfile",
-					EnvVar: "TRUSTEDB_TRUSTFILE",
-				},
-			},
-			Action: func(c *cli.Context) {
-				trustfile := c.String("trustfile")
-				if len(trustfile) == 0 {
-					fmt.Println("Please specify a trustfile")
-					os.Exit(1)
+	cp.Command("keyfile", "Manage keyfile", func(cmd *cli.Cmd) {
+		cmd.Command("create", "Create a new keyfile", func(cmd *cli.Cmd) {
+			cmd.Action = func() {
+				if len(*keyfile) == 0 {
+					fmt.Println("Please specify a keyfile location")
 				}
-				if err := createTrustfile(trustfile); err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				}
-			},
-		},
-		{
-			Name:  "approve",
-			Usage: "Approve a pending key addition or removal request",
-			Subcommands: []cli.Command{
-				{
-					Name:  "addition",
-					Usage: "Approve a pending addition",
-					Flags: []cli.Flag{
-						cli.StringFlag{
-							Name:   "keyfile",
-							Usage:  "Path to your keyfile with a DER formatted private key",
-							EnvVar: "TRUSTEDB_KEYFILE",
-						},
-						cli.StringFlag{
-							Name:   "trustfile",
-							Usage:  "Path to your trustfile",
-							EnvVar: "TRUSTEDB_TRUSTFILE",
-						},
-					},
-					Action: func(c *cli.Context) {
-						keyfile := c.String("keyfile")
-						if len(keyfile) == 0 {
-							fmt.Println("Please specify a value for --keyfile")
-							os.Exit(1)
-						}
-						trustfile := c.String("trustfile")
-						if len(trustfile) == 0 {
-							fmt.Println("Please specify a value for --trustfile")
-							os.Exit(1)
-						}
-
-						if len(c.Args()) == 0 {
-							fmt.Println("Please specify a hex encoded public key to approve")
-							os.Exit(1)
-						}
-						hexPubKeyString := c.Args()[0]
-
-						privKey, err := keyFromKeyFile(keyfile)
-						if err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						}
-
-						pubKeyBytes, err := hex.DecodeString(hexPubKeyString)
-						if err != nil {
-							fmt.Println("Unable to parse Public Key")
-							os.Exit(1)
-						}
-
-						if pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256()); err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						} else {
-							if err := approveLastAdditionInDbFile(pubKey, privKey, trustfile); err != nil {
-								fmt.Println(err)
-								os.Exit(1)
-							}
-						}
-					},
-				},
-				{
-					Name:  "removal",
-					Usage: "Approve a pending removal",
-					Flags: []cli.Flag{
-						cli.StringFlag{
-							Name:   "keyfile",
-							Usage:  "Path to your keyfile with a DER formatted private key",
-							EnvVar: "TRUSTEDB_KEYFILE",
-						},
-						cli.StringFlag{
-							Name:   "trustfile",
-							Usage:  "Path to your trustfile",
-							EnvVar: "TRUSTEDB_TRUSTFILE",
-						},
-					},
-					Action: func(c *cli.Context) {
-						keyfile := c.String("keyfile")
-						if len(keyfile) == 0 {
-							fmt.Println("Please specify a value for --keyfile")
-							os.Exit(1)
-						}
-						trustfile := c.String("trustfile")
-						if len(trustfile) == 0 {
-							fmt.Println("Please specify a value for --trustfile")
-							os.Exit(1)
-						}
-
-						if len(c.Args()) == 0 {
-							fmt.Println("Please specify a hex encoded public key to approve")
-							os.Exit(1)
-						}
-						hexPubKeyString := c.Args()[0]
-
-						privKey, err := keyFromKeyFile(keyfile)
-						if err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						}
-
-						pubKeyBytes, err := hex.DecodeString(hexPubKeyString)
-						if err != nil {
-							fmt.Println("Unable to parse Public Key")
-							os.Exit(1)
-						}
-
-						if pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256()); err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						} else {
-							if err := approveLastRemovalInDbFile(pubKey, privKey, trustfile); err != nil {
-								fmt.Println(err)
-								os.Exit(1)
-							}
-						}
-					},
-				},
-			},
-		},
-		{
-			Name:  "create-key",
-			Usage: "Create a keyfile",
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:   "keyfile",
-					Usage:  "Path to store your DER formatted private key",
-					EnvVar: "TRUSTEDB_KEYFILE",
-				},
-			},
-			Action: func(c *cli.Context) {
-				keyfile := c.String("keyfile")
-				if len(keyfile) == 0 {
-					fmt.Println("Please specify a keyfile")
-				}
-				err := createKeyfile(keyfile)
+				err := createKeyfile(*keyfile)
 				if err != nil {
 					fmt.Println("Error", err)
 				}
-			},
-		},
-		{
-			Name:  "request",
-			Usage: "Request modification to the specified Trustfile",
-			Subcommands: []cli.Command{
-				{
-					Name:  "addition",
-					Usage: "Request the addition of a key to the Trustfile",
-					Flags: []cli.Flag{
-						cli.StringFlag{
-							Name:   "keyfile",
-							Usage:  "Path to your keyfile with a DER formatted private key",
-							EnvVar: "TRUSTEDB_KEYFILE",
-						},
-						cli.StringFlag{
-							Name:   "trustfile",
-							Usage:  "Path to your trustfile",
-							EnvVar: "TRUSTEDB_TRUSTFILE",
-						},
-						cli.StringFlag{
-							Name:  "identifier",
-							Usage: "Human readable identifier for the key owner",
-						},
-					},
-					Action: func(c *cli.Context) {
-						keyfile := c.String("keyfile")
-						if len(keyfile) == 0 {
-							fmt.Println("Please specify a value for --keyfile")
-							os.Exit(1)
-						}
-						trustfile := c.String("trustfile")
-						if len(trustfile) == 0 {
-							fmt.Println("Please specify a value for --trustfile")
-							os.Exit(1)
-						}
+			}
+		})
+	})
+	cp.Command("signers", "Manage authorized signers", func(cmd *cli.Cmd) {
+		cmd.Command("status", "determine the status of a signer", func(cmd *cli.Cmd) {
+			fmt.Println("status of key")
+		})
+		cmd.Command("list", "List the signers", func(cmd *cli.Cmd) {
+			fmt.Println("List keys")
+		})
+	})
+	cp.Command("add", "Initiate the process of adding a signer", func(cmd *cli.Cmd) {
+		fmt.Println("start adding a signer")
+	})
+	cp.Command("remove", "Initiate the process of removing a signer", func(cmd *cli.Cmd) {
+		fmt.Println("start removing a signer")
+	})
+	cp.Command("confirm", "Confirm an addition or revocation", func(cmd *cli.Cmd) {
+		identity := cmd.String(cli.StringArg{Name: "IDENTIFIER", Value: "", Desc: "The public identifier to confirm"})
+		fmt.Println(identity)
+	})
+	cp.Command("verify", "Verify a signature against the Trustfile", func(cmd *cli.Cmd) {
+		identity := cmd.String(cli.StringArg{Name: "IDENTIFIER", Value: "", Desc: "The public identifier to add"})
+		fmt.Println(identity)
+	})
 
-						identifier := c.String("identifier")
-						if len(identifier) == 0 {
-							fmt.Println("Please specify a value for --identifier")
-							os.Exit(1)
-						}
-
-						privKey, err := keyFromKeyFile(keyfile)
-						if err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						}
-
-						if err := addEntryToDbFile(privKey, c.String("identifier"), trustfile); err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						}
+	/*
+		app := cli.NewApp()
+		app.Name = "Trustedb"
+		app.Usage = "Verifiable append-only file of trusted keys"
+		app.Commands = []cli.Command{
+			{
+				Name:  "init",
+				Usage: "Create a Trustedb file",
+				Flags: []cli.Flag{
+					cli.StringFlag{
+						Name:   "trustfile",
+						Usage:  "Path to your trustfile",
+						EnvVar: "TRUSTEDB_TRUSTFILE",
 					},
 				},
-				{
-					Name:  "removal",
-					Usage: "Request the removal of a key from the Trustfile",
-					Flags: []cli.Flag{
-						cli.StringFlag{
-							Name:   "keyfile",
-							Usage:  "Path to your keyfile with a DER formatted private key",
-							EnvVar: "TRUSTEDB_KEYFILE",
-						},
-						cli.StringFlag{
-							Name:   "trustfile",
-							Usage:  "Path to your trustfile",
-							EnvVar: "TRUSTEDB_TRUSTFILE",
-						},
-						cli.StringFlag{
-							Name:  "identifier",
-							Usage: "Human readable identifier for the key owner",
-						},
-					},
-					Action: func(c *cli.Context) {
-						keyfile := c.String("keyfile")
-						if len(keyfile) == 0 {
-							fmt.Println("Please specify a value for --keyfile")
-							os.Exit(1)
-						}
-						trustfile := c.String("trustfile")
-						if len(trustfile) == 0 {
-							fmt.Println("Please specify a value for --trustfile")
-							os.Exit(1)
-						}
-
-						identifier := c.String("identifier")
-						if len(identifier) == 0 {
-							fmt.Println("Please specify a value for --identifier")
-							os.Exit(1)
-						}
-
-						privKey, err := keyFromKeyFile(keyfile)
-						if err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						}
-
-						if err := removeEntryFromDbFile(privKey, c.String("identifier"), trustfile); err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						}
-					},
-				},
-			},
-		},
-		{
-			Name:  "verify",
-			Usage: "Verify the integrity of a Trustedb file",
-			Flags: []cli.Flag{
-				cli.BoolFlag{
-					Name:  "skiplast",
-					Usage: "Skip threshold check on last entry",
-				},
-				cli.StringFlag{
-					Name:   "trustfile",
-					Usage:  "Path to your trustfile",
-					EnvVar: "TRUSTEDB_TRUSTFILE",
-				},
-			},
-			Action: func(c *cli.Context) {
-				trustfile := c.String("trustfile")
-				if len(trustfile) == 0 {
-					fmt.Println("Please specify a trustfile")
-					os.Exit(1)
-				}
-
-				if err := verifyDbFile(trustfile, c.Bool("skiplast")); err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				} else {
-					fmt.Println("Success!")
-				}
-			},
-		},
-		{
-			Name:  "signers",
-			Usage: "List the approved signers hashes",
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:   "trustfile",
-					Usage:  "Path to your trustfile",
-					EnvVar: "TRUSTEDB_TRUSTFILE",
-				},
-			},
-			Action: func(c *cli.Context) {
-				trustfile := c.String("trustfile")
-				if len(trustfile) == 0 {
-					fmt.Println("Please specify a trustfile")
-					os.Exit(1)
-				}
-
-				if err := verifyDbFile(trustfile, true); err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				}
-
-				keys, sigs, err := parseDbFile(trustfile)
-				if err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				}
-
-				if signers, _, err := signersForEntryIndex(-1, keys, sigs); err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				} else {
-					for key, _ := range signers {
-						fmt.Println(key)
-					}
-				}
-			},
-		},
-		{
-			Name:  "checksig",
-			Usage: "Check that the signature comes from an approved deployer",
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:   "trustfile",
-					Usage:  "Path to your trustfile",
-					EnvVar: "TRUSTEDB_TRUSTFILE",
-				},
-			},
-			Action: func(c *cli.Context) {
-				trustfile := c.String("trustfile")
-				if len(trustfile) == 0 {
-					fmt.Println("Please specify a trustfile")
-					os.Exit(1)
-				}
-
-				if err := verifyDbFile(trustfile, true); err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				}
-
-				keys, sigs, err := parseDbFile(trustfile)
-				if err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				}
-
-				if signers, _, err := signersForEntryIndex(-1, keys, sigs); err != nil {
-					fmt.Println(err)
-					os.Exit(1)
-				} else {
-					if len(signers) == 0 {
-						fmt.Println("Signer not approved")
+				Action: func(c *cli.Context) {
+					trustfile := c.String("trustfile")
+					if len(trustfile) == 0 {
+						fmt.Println("Please specify a trustfile")
 						os.Exit(1)
 					}
-
-					sig := SigEntry{}
-					content := ""
-					if len(c.Args()) == 0 {
-						fmt.Println("Must specify the plaintext content and hex encoded signature")
+					if err := createTrustfile(trustfile); err != nil {
+						fmt.Println(err)
 						os.Exit(1)
-					} else if len(c.Args()) == 1 {
-						bytes, err := ioutil.ReadAll(os.Stdin)
-						if len(bytes) == 0 {
-							fmt.Println("Must specify the plaintext content and hex encoded signature")
-							os.Exit(1)
-						}
-						content = string(bytes)
-						sigs, err := parseSigEntryLines([]string{"s= " + c.Args()[0]})
-						if err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						}
-						sig = sigs[0]
-					} else if len(c.Args()) == 2 {
-						content = c.Args()[0]
-						sigs, err := parseSigEntryLines([]string{"s= " + c.Args()[1]})
-						if err != nil {
-							fmt.Println(err)
-							os.Exit(1)
-						}
-						sig = sigs[0]
 					}
-					pk, err := checkSigAndRecoverCompact(sig, content)
+				},
+			},
+			{
+				Name:  "approve",
+				Usage: "Approve a pending key addition or removal request",
+				Subcommands: []cli.Command{
+					{
+						Name:  "addition",
+						Usage: "Approve a pending addition",
+						Flags: []cli.Flag{
+							cli.StringFlag{
+								Name:   "keyfile",
+								Usage:  "Path to your keyfile with a DER formatted private key",
+								EnvVar: "TRUSTEDB_KEYFILE",
+							},
+							cli.StringFlag{
+								Name:   "trustfile",
+								Usage:  "Path to your trustfile",
+								EnvVar: "TRUSTEDB_TRUSTFILE",
+							},
+						},
+						Action: func(c *cli.Context) {
+							keyfile := c.String("keyfile")
+							if len(keyfile) == 0 {
+								fmt.Println("Please specify a value for --keyfile")
+								os.Exit(1)
+							}
+							trustfile := c.String("trustfile")
+							if len(trustfile) == 0 {
+								fmt.Println("Please specify a value for --trustfile")
+								os.Exit(1)
+							}
+
+							if len(c.Args()) == 0 {
+								fmt.Println("Please specify a hex encoded public key to approve")
+								os.Exit(1)
+							}
+							hexPubKeyString := c.Args()[0]
+
+							privKey, err := keyFromKeyFile(keyfile)
+							if err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+
+							pubKeyBytes, err := hex.DecodeString(hexPubKeyString)
+							if err != nil {
+								fmt.Println("Unable to parse Public Key")
+								os.Exit(1)
+							}
+
+							if pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256()); err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							} else {
+								if err := approveLastAdditionInDbFile(pubKey, privKey, trustfile); err != nil {
+									fmt.Println(err)
+									os.Exit(1)
+								}
+							}
+						},
+					},
+					{
+						Name:  "removal",
+						Usage: "Approve a pending removal",
+						Flags: []cli.Flag{
+							cli.StringFlag{
+								Name:   "keyfile",
+								Usage:  "Path to your keyfile with a DER formatted private key",
+								EnvVar: "TRUSTEDB_KEYFILE",
+							},
+							cli.StringFlag{
+								Name:   "trustfile",
+								Usage:  "Path to your trustfile",
+								EnvVar: "TRUSTEDB_TRUSTFILE",
+							},
+						},
+						Action: func(c *cli.Context) {
+							keyfile := c.String("keyfile")
+							if len(keyfile) == 0 {
+								fmt.Println("Please specify a value for --keyfile")
+								os.Exit(1)
+							}
+							trustfile := c.String("trustfile")
+							if len(trustfile) == 0 {
+								fmt.Println("Please specify a value for --trustfile")
+								os.Exit(1)
+							}
+
+							if len(c.Args()) == 0 {
+								fmt.Println("Please specify a hex encoded public key to approve")
+								os.Exit(1)
+							}
+							hexPubKeyString := c.Args()[0]
+
+							privKey, err := keyFromKeyFile(keyfile)
+							if err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+
+							pubKeyBytes, err := hex.DecodeString(hexPubKeyString)
+							if err != nil {
+								fmt.Println("Unable to parse Public Key")
+								os.Exit(1)
+							}
+
+							if pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256()); err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							} else {
+								if err := approveLastRemovalInDbFile(pubKey, privKey, trustfile); err != nil {
+									fmt.Println(err)
+									os.Exit(1)
+								}
+							}
+						},
+					},
+				},
+			},
+			{
+				Name:  "create-key",
+				Usage: "Create a keyfile",
+				Flags: []cli.Flag{
+					cli.StringFlag{
+						Name:   "keyfile",
+						Usage:  "Path to store your DER formatted private key",
+						EnvVar: "TRUSTEDB_KEYFILE",
+					},
+				},
+				Action: func(c *cli.Context) {
+					keyfile := c.String("keyfile")
+					if len(keyfile) == 0 {
+						fmt.Println("Please specify a keyfile")
+					}
+					err := createKeyfile(keyfile)
 					if err != nil {
-						fmt.Println("Must specify the plaintext content and hex encoded signature")
+						fmt.Println("Error", err)
+					}
+				},
+			},
+			{
+				Name:  "request",
+				Usage: "Request modification to the specified Trustfile",
+				Subcommands: []cli.Command{
+					{
+						Name:  "addition",
+						Usage: "Request the addition of a key to the Trustfile",
+						Flags: []cli.Flag{
+							cli.StringFlag{
+								Name:   "keyfile",
+								Usage:  "Path to your keyfile with a DER formatted private key",
+								EnvVar: "TRUSTEDB_KEYFILE",
+							},
+							cli.StringFlag{
+								Name:   "trustfile",
+								Usage:  "Path to your trustfile",
+								EnvVar: "TRUSTEDB_TRUSTFILE",
+							},
+							cli.StringFlag{
+								Name:  "identifier",
+								Usage: "Human readable identifier for the key owner",
+							},
+						},
+						Action: func(c *cli.Context) {
+							keyfile := c.String("keyfile")
+							if len(keyfile) == 0 {
+								fmt.Println("Please specify a value for --keyfile")
+								os.Exit(1)
+							}
+							trustfile := c.String("trustfile")
+							if len(trustfile) == 0 {
+								fmt.Println("Please specify a value for --trustfile")
+								os.Exit(1)
+							}
+
+							identifier := c.String("identifier")
+							if len(identifier) == 0 {
+								fmt.Println("Please specify a value for --identifier")
+								os.Exit(1)
+							}
+
+							privKey, err := keyFromKeyFile(keyfile)
+							if err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+
+							if err := addEntryToDbFile(privKey, c.String("identifier"), trustfile); err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+						},
+					},
+					{
+						Name:  "removal",
+						Usage: "Request the removal of a key from the Trustfile",
+						Flags: []cli.Flag{
+							cli.StringFlag{
+								Name:   "keyfile",
+								Usage:  "Path to your keyfile with a DER formatted private key",
+								EnvVar: "TRUSTEDB_KEYFILE",
+							},
+							cli.StringFlag{
+								Name:   "trustfile",
+								Usage:  "Path to your trustfile",
+								EnvVar: "TRUSTEDB_TRUSTFILE",
+							},
+							cli.StringFlag{
+								Name:  "identifier",
+								Usage: "Human readable identifier for the key owner",
+							},
+						},
+						Action: func(c *cli.Context) {
+							keyfile := c.String("keyfile")
+							if len(keyfile) == 0 {
+								fmt.Println("Please specify a value for --keyfile")
+								os.Exit(1)
+							}
+							trustfile := c.String("trustfile")
+							if len(trustfile) == 0 {
+								fmt.Println("Please specify a value for --trustfile")
+								os.Exit(1)
+							}
+
+							identifier := c.String("identifier")
+							if len(identifier) == 0 {
+								fmt.Println("Please specify a value for --identifier")
+								os.Exit(1)
+							}
+
+							privKey, err := keyFromKeyFile(keyfile)
+							if err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+
+							if err := removeEntryFromDbFile(privKey, c.String("identifier"), trustfile); err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+						},
+					},
+				},
+			},
+			{
+				Name:  "verify",
+				Usage: "Verify the integrity of a Trustedb file",
+				Flags: []cli.Flag{
+					cli.BoolFlag{
+						Name:  "skiplast",
+						Usage: "Skip threshold check on last entry",
+					},
+					cli.StringFlag{
+						Name:   "trustfile",
+						Usage:  "Path to your trustfile",
+						EnvVar: "TRUSTEDB_TRUSTFILE",
+					},
+				},
+				Action: func(c *cli.Context) {
+					trustfile := c.String("trustfile")
+					if len(trustfile) == 0 {
+						fmt.Println("Please specify a trustfile")
 						os.Exit(1)
 					}
-					if _, ok := signers[hex.EncodeToString(pk.SerializeCompressed())]; !ok {
-						fmt.Println("Signer not approved")
+
+					if err := verifyDbFile(trustfile, c.Bool("skiplast")); err != nil {
+						fmt.Println(err)
 						os.Exit(1)
 					} else {
 						fmt.Println("Success!")
-						os.Exit(0)
 					}
-				}
+				},
 			},
-		},
-	}
-	app.Run(os.Args)
+			{
+				Name:  "signers",
+				Usage: "List the approved signers hashes",
+				Flags: []cli.Flag{
+					cli.StringFlag{
+						Name:   "trustfile",
+						Usage:  "Path to your trustfile",
+						EnvVar: "TRUSTEDB_TRUSTFILE",
+					},
+				},
+				Action: func(c *cli.Context) {
+					trustfile := c.String("trustfile")
+					if len(trustfile) == 0 {
+						fmt.Println("Please specify a trustfile")
+						os.Exit(1)
+					}
+
+					if err := verifyDbFile(trustfile, true); err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					}
+
+					keys, sigs, err := parseDbFile(trustfile)
+					if err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					}
+
+					if signers, _, err := signersForEntryIndex(-1, keys, sigs); err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					} else {
+						for key, _ := range signers {
+							fmt.Println(key)
+						}
+					}
+				},
+			},
+			{
+				Name:  "checksig",
+				Usage: "Check that the signature comes from an approved deployer",
+				Flags: []cli.Flag{
+					cli.StringFlag{
+						Name:   "trustfile",
+						Usage:  "Path to your trustfile",
+						EnvVar: "TRUSTEDB_TRUSTFILE",
+					},
+				},
+				Action: func(c *cli.Context) {
+					trustfile := c.String("trustfile")
+					if len(trustfile) == 0 {
+						fmt.Println("Please specify a trustfile")
+						os.Exit(1)
+					}
+
+					if err := verifyDbFile(trustfile, true); err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					}
+
+					keys, sigs, err := parseDbFile(trustfile)
+					if err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					}
+
+					if signers, _, err := signersForEntryIndex(-1, keys, sigs); err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					} else {
+						if len(signers) == 0 {
+							fmt.Println("Signer not approved")
+							os.Exit(1)
+						}
+
+						sig := SigEntry{}
+						content := ""
+						if len(c.Args()) == 0 {
+							fmt.Println("Must specify the plaintext content and hex encoded signature")
+							os.Exit(1)
+						} else if len(c.Args()) == 1 {
+							bytes, err := ioutil.ReadAll(os.Stdin)
+							if len(bytes) == 0 {
+								fmt.Println("Must specify the plaintext content and hex encoded signature")
+								os.Exit(1)
+							}
+							content = string(bytes)
+							sigs, err := parseSigEntryLines([]string{"s= " + c.Args()[0]})
+							if err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+							sig = sigs[0]
+						} else if len(c.Args()) == 2 {
+							content = c.Args()[0]
+							sigs, err := parseSigEntryLines([]string{"s= " + c.Args()[1]})
+							if err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+							sig = sigs[0]
+						}
+						pk, err := checkSigAndRecoverCompact(sig, content)
+						if err != nil {
+							fmt.Println("Must specify the plaintext content and hex encoded signature")
+							os.Exit(1)
+						}
+						if _, ok := signers[hex.EncodeToString(pk.SerializeCompressed())]; !ok {
+							fmt.Println("Signer not approved")
+							os.Exit(1)
+						} else {
+							fmt.Println("Success!")
+							os.Exit(0)
+						}
+					}
+				},
+			},
+		}
+	*/
+	cp.Run(os.Args)
 }
