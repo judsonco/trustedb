@@ -6,6 +6,7 @@ gom 'github.com/btcsuite/btcd/btcec'
 
 # Bitcoin bip32 key gen
 gom 'github.com/btcsuite/btcutil/hdkeychain'
+gom 'github.com/btcsuite/btcd/chaincfg'
 
 # Portable home directory
 gom 'github.com/mitchellh/go-homedir'
