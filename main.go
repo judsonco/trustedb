@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcutil/hdkeychain"
 	"github.com/jawher/mow.cli"
 	"github.com/mitchellh/go-homedir"
@@ -53,7 +54,7 @@ func readLines(path string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
-func createKeyfile(path string) error {
+func createIdentity(path string) error {
 	path, err := homedir.Expand(path)
 	if err != nil {
 		return err
@@ -61,7 +62,7 @@ func createKeyfile(path string) error {
 
 	lines, _ := readLines(path)
 	if len(lines) > 0 {
-		return errors.New("Won't overwrite file")
+		return errors.New("Won't overwrite file " + path)
 	}
 
 	// Make the directory if it doesn't exist
@@ -75,12 +76,34 @@ func createKeyfile(path string) error {
 	}
 	defer file.Close()
 
-	k, err := btcec.NewPrivateKey(btcec.S256())
+	seed, err := hdkeychain.GenerateSeed(hdkeychain.RecommendedSeedLen)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
 
 	w := bufio.NewWriter(file)
-	fmt.Fprintln(w, hex.EncodeToString(k.Serialize()))
+	fmt.Fprintln(w, hex.EncodeToString(seed))
 
-	fmt.Println(hex.EncodeToString(k.PubKey().SerializeCompressed()))
+	key, err := hdkeychain.NewMaster(seed, &chaincfg.MainNetParams)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	identity, err := key.Child(hdkeychain.HardenedKeyStart + 0)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	pubIdentity, err := identity.Neuter()
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	fmt.Println("Your Identity: " + pubIdentity.String())
 
 	return w.Flush()
 }
@@ -711,11 +734,11 @@ func keyFromKeyFile(path string) (*btcec.PrivateKey, error) {
 func main() {
 	cp := cli.App("trustedb", "Trustedb.")
 	var (
-		keyfile = cp.String(cli.StringOpt{
-			Name:   "k keyfile",
-			Value:  "~/.trustedb/default",
-			Desc:   "Location of keyfile",
-			EnvVar: "TRUSTEDB_KEYFILE",
+		identity = cp.String(cli.StringOpt{
+			Name:   "i identity",
+			Value:  "~/.trustedb/identity",
+			Desc:   "Location of identity",
+			EnvVar: "TRUSTEDB_IDENTITY",
 		})
 		trustfile = cp.String(cli.StringOpt{
 			Name:   "t trustfile",
@@ -736,13 +759,13 @@ func main() {
 			}
 		}
 	})
-	cp.Command("keyfile", "Manage keyfile", func(cmd *cli.Cmd) {
-		cmd.Command("create", "Create a new keyfile", func(cmd *cli.Cmd) {
+	cp.Command("identity", "Manage your trustedb identity", func(cmd *cli.Cmd) {
+		cmd.Command("create", "Create a new identity", func(cmd *cli.Cmd) {
 			cmd.Action = func() {
-				if len(*keyfile) == 0 {
-					fmt.Println("Please specify a keyfile location")
+				if len(*identity) == 0 {
+					fmt.Println("Please specify the location of your trustedb identity")
 				}
-				err := createKeyfile(*keyfile)
+				err := createIdentity(*identity)
 				if err != nil {
 					fmt.Println("Error", err)
 				}
