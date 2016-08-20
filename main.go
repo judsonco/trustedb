@@ -84,6 +84,10 @@ func createIdentity(path string) error {
 
 	w := bufio.NewWriter(file)
 	fmt.Fprintln(w, hex.EncodeToString(seed))
+	// Current hardened index (e.g. m/0'), useful if the
+	// user needs to change their identity
+	fmt.Fprintln(w, "0")
+	fmt.Fprintln(w, "trustedb") // Canary for future AES decrypt success
 
 	key, err := hdkeychain.NewMaster(seed, &chaincfg.MainNetParams)
 	if err != nil {
