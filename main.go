@@ -38,6 +38,13 @@ type KeyEntry struct {
 	DoubleSha256PubKeyBytes []byte
 }
 
+/*
+ * Command Constants
+ */
+const ADDITION_COMMAND string = "+"
+const REMOVAL_COMMAND string = "-"
+const TRUSTFILE_NEWLINE string = "\n"
+
 func readLines(path string) ([]string, error) {
 	path, err := homedir.Expand(path)
 	file, err := os.Open(path)
@@ -83,6 +90,7 @@ func createIdentity(path string) error {
 	}
 
 	w := bufio.NewWriter(file)
+	// Add the hex encoded seed to the file
 	fmt.Fprintln(w, hex.EncodeToString(seed))
 	// Current hardened index (e.g. m/0'), useful if the
 	// user needs to change their identity
@@ -165,13 +173,18 @@ func verifyNoDoubleSignatures(keys []KeyEntry, entrySigs [][]SigEntry) error {
 
 		s := map[string]int{}
 		for _, sig := range sigs {
+			// Check that the signature is well formed and return the compact public key
 			if pk, err := checkSigAndRecoverCompact(sig, content); err != nil {
 				return err
 			} else {
+				// Get a string representation of the compact public key
 				k := hex.EncodeToString(pk.SerializeCompressed())
+				// Check that we haven't seen this key for this command
+				// e.g. no double signs for the same command
 				if _, ok := s[k]; ok {
 					return errors.New("Double signature for entry")
 				} else {
+					// Add entry to map for key to mark it as used.
 					s[k] = 1
 				}
 			}
@@ -188,7 +201,7 @@ func verifyNoDoubleAdd(keys []KeyEntry) error {
 	logKeys := map[string]int{}
 
 	if len(keys) == 1 {
-		if keys[0].Cmd == "+" {
+		if keys[0].Cmd == ADDITION_COMMAND {
 			return nil
 		} else {
 			return errors.New("An entry must be added before it may be removed")
@@ -199,17 +212,17 @@ func verifyNoDoubleAdd(keys []KeyEntry) error {
 		c := hex.EncodeToString(key.DoubleSha256PubKeyBytes)
 		_, hasKey := logKeys[c]
 		if hasKey {
-			if key.Cmd == "+" {
+			if key.Cmd == ADDITION_COMMAND {
 				return errors.New("An entry must be removed before it may be added again")
 			}
 		} else {
-			if key.Cmd == "-" {
+			if key.Cmd == REMOVAL_COMMAND {
 				return errors.New("An entry must be added before it may be removed")
 			}
 		}
-		if key.Cmd == "-" {
+		if key.Cmd == REMOVAL_COMMAND {
 			delete(logKeys, c)
-		} else if key.Cmd == "+" {
+		} else if key.Cmd == ADDITION_COMMAND {
 			logKeys[c] = 1
 		}
 	}
@@ -229,11 +242,11 @@ func contentForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (conten
 	for i, entry := range keys {
 		// Make sure the content is the same
 		if i > 0 {
-			content += "\n"
+			content += TRUSTFILE_NEWLINE
 		}
-		if entry.Cmd == "+" {
+		if entry.Cmd == ADDITION_COMMAND {
 			content += strings.Join([]string{"=" + entry.Cmd, entry.Identifier, hex.EncodeToString(entry.DoubleSha256PubKeyBytes)}, "")
-		} else if entry.Cmd == "-" {
+		} else if entry.Cmd == REMOVAL_COMMAND {
 			content += strings.Join([]string{"=" + entry.Cmd, entry.Identifier}, "")
 		}
 
@@ -246,7 +259,7 @@ func contentForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (conten
 		sigContent := ""
 		for j, sig := range sigs[i] {
 			if j > 0 {
-				sigContent += "\n"
+				sigContent += TRUSTFILE_NEWLINE
 			}
 			if p, err := checkSigAndRecoverCompact(sig, sigContent); err == nil {
 				sigContent += strings.Join([]string{"SigFrom", " ", hex.EncodeToString(p.SerializeCompressed()), " ", hex.EncodeToString(sig.SigBytes)}, "")
@@ -301,9 +314,9 @@ func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (map[st
 					numSuccessfulSigs += 1
 					if numSuccessfulSigs >= required {
 						k := hex.EncodeToString(entry.DoubleSha256PubKeyBytes)
-						if entry.Cmd == "+" {
+						if entry.Cmd == ADDITION_COMMAND {
 							signers[k] = true
-						} else if entry.Cmd == "-" {
+						} else if entry.Cmd == REMOVAL_COMMAND {
 							delete(signers, k)
 						}
 					}
@@ -416,7 +429,7 @@ func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey,
 	if err := verifySequentialEntrySigsAtIndex(lastEntry, keys, sigs); err == nil {
 		return errors.New("No pending addition to approve")
 	} else {
-		if keys[lastEntry].Cmd != "+" {
+		if keys[lastEntry].Cmd != ADDITION_COMMAND {
 			return errors.New("No pending addition to approve")
 		}
 
@@ -500,7 +513,7 @@ func approveLastRemovalInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey, 
 	if err := verifySequentialEntrySigsAtIndex(lastEntry, keys, sigs); err == nil {
 		return errors.New("No pending addition to approve")
 	} else {
-		if keys[lastEntry].Cmd != "-" {
+		if keys[lastEntry].Cmd != REMOVAL_COMMAND {
 			return errors.New("No pending removal to approve")
 		}
 
@@ -690,7 +703,7 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 		return keyEntries, sigEntries, nil
 	}
 
-	entriesWithSignatures := regexp.MustCompile("(?m)^=").Split(strings.Join(lines, "\n"), -1)
+	entriesWithSignatures := regexp.MustCompile("(?m)^=").Split(strings.Join(lines, TRUSTFILE_NEWLINE), -1)
 	// The first element is reserved for configuration
 	// we're not using that now, so just dispose of it
 	if len(entriesWithSignatures) > 0 && len(entriesWithSignatures[0]) == 0 {
@@ -804,28 +817,6 @@ func main() {
 		app.Name = "Trustedb"
 		app.Usage = "Verifiable append-only file of trusted keys"
 		app.Commands = []cli.Command{
-			{
-				Name:  "init",
-				Usage: "Create a Trustedb file",
-				Flags: []cli.Flag{
-					cli.StringFlag{
-						Name:   "trustfile",
-						Usage:  "Path to your trustfile",
-						EnvVar: "TRUSTEDB_TRUSTFILE",
-					},
-				},
-				Action: func(c *cli.Context) {
-					trustfile := c.String("trustfile")
-					if len(trustfile) == 0 {
-						fmt.Println("Please specify a trustfile")
-						os.Exit(1)
-					}
-					if err := createTrustfile(trustfile); err != nil {
-						fmt.Println(err)
-						os.Exit(1)
-					}
-				},
-			},
 			{
 				Name:  "approve",
 				Usage: "Approve a pending key addition or removal request",
