@@ -26,7 +26,7 @@ teardown() {
   [ "$status" -eq 0 ]
   [ -f "$TRUSTEDB_TRUSTFILE" ]
 
-  run $TRUSTEDB_BINARY create-key
+  run $TRUSTEDB_BINARY identity create
   [ "$status" -eq 0 ]
   [ -f "$TRUSTEDB_KEYFILE" ]
 }
@@ -36,7 +36,7 @@ teardown() {
   run $TRUSTEDB_BINARY init
   [ "$status" -eq 0 ]
 
-  run $TRUSTEDB_BINARY create-key
+  run $TRUSTEDB_BINARY identity create
   [ "$status" -eq 0 ]
 
   run $TRUSTEDB_BINARY request addition --identifier="test@test.com"
