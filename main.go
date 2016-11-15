@@ -45,6 +45,9 @@ const ADDITION_COMMAND string = "+"
 const REMOVAL_COMMAND string = "-"
 const TRUSTFILE_NEWLINE string = "\n"
 
+/*
+ * File Operations
+ */
 func readLines(path string) ([]string, error) {
 	path, err := homedir.Expand(path)
 	file, err := os.Open(path)
@@ -59,6 +62,48 @@ func readLines(path string) ([]string, error) {
 		lines = append(lines, scanner.Text())
 	}
 	return lines, scanner.Err()
+}
+
+func cp(dst, src string) error {
+	s, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+
+	defer s.Close()
+
+	d, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(d, s); err != nil {
+		d.Close()
+		return err
+	}
+
+	return d.Close()
+}
+
+/*
+ * Identity Operations
+ */
+func keyFromKeyFile(path string) (*btcec.PrivateKey, error) {
+	path, err := homedir.Expand(path)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := readLines(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(lines) == 0 {
+		return nil, errors.New("No private key in keyfile")
+	}
+	keyBytes, err := hex.DecodeString(lines[0])
+	k, _ := btcec.PrivKeyFromBytes(btcec.S256(), keyBytes)
+
+	return k, nil
 }
 
 func createIdentity(path string) error {
@@ -120,27 +165,13 @@ func createIdentity(path string) error {
 	return w.Flush()
 }
 
-func cp(dst, src string) error {
-	s, err := os.Open(src)
-	if err != nil {
-		return err
-	}
+/*
+ * Trustfile Operations
+ */
 
-	defer s.Close()
-
-	d, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-
-	if _, err := io.Copy(d, s); err != nil {
-		d.Close()
-		return err
-	}
-
-	return d.Close()
-}
-
+/*
+ * Create the trustfile at a specified path
+ */
 func createTrustfile(path string) error {
 	path, err := homedir.Expand(path)
 	if err != nil {
@@ -157,6 +188,34 @@ func createTrustfile(path string) error {
 		return err
 	}
 	defer file.Close()
+
+	return nil
+}
+
+/*
+ * Verify the Trustfile, and make sure it is well formed
+ */
+func verifyDbFile(path string, skipLast bool) error {
+	keys, sigs, err := parseDbFile(path)
+	if err != nil {
+		return err
+	}
+
+	if err := verifyNoDoubleAdd(keys); err != nil {
+		return err
+	}
+
+	if err := verifyNoDoubleSignatures(keys, sigs); err != nil {
+		return err
+	}
+
+	if len(keys) > 0 {
+		if err := verifySequentialEntrySigsAtIndex(len(keys)-1, keys, sigs); err != nil {
+			if skipLastKey := len(keys) - 2; skipLast && skipLastKey >= 0 {
+				return verifySequentialEntrySigsAtIndex(skipLastKey, keys, sigs)
+			}
+		}
+	}
 
 	return nil
 }
@@ -230,6 +289,51 @@ func verifyNoDoubleAdd(keys []KeyEntry) error {
 	return nil
 }
 
+/*
+ * Verify that each signature sequentially signs all
+ * of the lines above it's insertion point.
+ */
+func verifySequentialEntrySigsAtIndex(index int, keys []KeyEntry, sigs [][]SigEntry) error {
+	for i, _ := range keys {
+		// Get the content to sign
+		content, err := contentForEntryIndex(i, keys, sigs)
+		if err != nil {
+			return err
+		}
+
+		signers, req, err := signersForEntryIndex(i, keys, sigs)
+		if err != nil {
+			return err
+		}
+
+		successfulSigs := 0
+		for _, sig := range sigs[i] {
+			if p, err := checkSigAndRecoverCompact(sig, content); err == nil {
+				if _, ok := signers[hex.EncodeToString(p.SerializeCompressed())]; ok {
+					// Signers can only sign once. Remove after successful sig
+					delete(signers, hex.EncodeToString(p.SerializeCompressed()))
+					successfulSigs += 1
+				}
+			}
+		}
+
+		if successfulSigs < req {
+			return errors.New("Signature threshold not passed")
+		}
+
+		if i == index {
+			break
+		}
+	}
+
+	return nil
+}
+
+/*
+ * Get the content to sign for an entry index. Each of the signatures
+ * sign the previous signatures, but they do not sign signatures for the
+ * same entry. This way git merges are easier. NOTE: Not sure if this is a great idea.
+ */
 func contentForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (content string, err error) {
 	if index == 0 {
 		return
@@ -271,6 +375,9 @@ func contentForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (conten
 	return content, nil
 }
 
+/*
+ * Get the approved signers for a given index
+ */
 func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (map[string]bool, int, error) {
 	if len(keys) == 0 {
 		return map[string]bool{}, 1, nil
@@ -328,6 +435,13 @@ func signersForEntryIndex(index int, keys []KeyEntry, sigs [][]SigEntry) (map[st
 	return signers, required, nil
 }
 
+/*
+ * Crypto Functions
+ */
+
+/*
+ * Check the signature and return the compact public key
+ */
 func checkSigAndRecoverCompact(sig SigEntry, content string) (*btcec.PublicKey, error) {
 	hasher := sha256.New()
 	hasher.Write([]byte(content))
@@ -340,73 +454,15 @@ func checkSigAndRecoverCompact(sig SigEntry, content string) (*btcec.PublicKey, 
 	}
 }
 
+/*
+ * Check the signature
+ */
 func checkSig(sig SigEntry, content string, signers map[string]*btcec.PublicKey) bool {
 	if _, err := checkSigAndRecoverCompact(sig, content); err == nil {
 		return true
 	} else {
 		return false
 	}
-}
-
-func verifySequentialEntrySigsAtIndex(index int, keys []KeyEntry, sigs [][]SigEntry) error {
-	for i, _ := range keys {
-		// Get the content to sign
-		content, err := contentForEntryIndex(i, keys, sigs)
-		if err != nil {
-			return err
-		}
-
-		signers, req, err := signersForEntryIndex(i, keys, sigs)
-		if err != nil {
-			return err
-		}
-
-		successfulSigs := 0
-		for _, sig := range sigs[i] {
-			if p, err := checkSigAndRecoverCompact(sig, content); err == nil {
-				if _, ok := signers[hex.EncodeToString(p.SerializeCompressed())]; ok {
-					// Signers can only sign once. Remove after successful sig
-					delete(signers, hex.EncodeToString(p.SerializeCompressed()))
-					successfulSigs += 1
-				}
-			}
-		}
-
-		if successfulSigs < req {
-			return errors.New("Signature threshold not passed")
-		}
-
-		if i == index {
-			break
-		}
-	}
-
-	return nil
-}
-
-func verifyDbFile(path string, skipLast bool) error {
-	keys, sigs, err := parseDbFile(path)
-	if err != nil {
-		return err
-	}
-
-	if err := verifyNoDoubleAdd(keys); err != nil {
-		return err
-	}
-
-	if err := verifyNoDoubleSignatures(keys, sigs); err != nil {
-		return err
-	}
-
-	if len(keys) > 0 {
-		if err := verifySequentialEntrySigsAtIndex(len(keys)-1, keys, sigs); err != nil {
-			if skipLastKey := len(keys) - 2; skipLast && skipLastKey >= 0 {
-				return verifySequentialEntrySigsAtIndex(skipLastKey, keys, sigs)
-			}
-		}
-	}
-
-	return nil
 }
 
 func approveLastAdditionInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey, path string) error {
@@ -728,24 +784,6 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 	}
 
 	return keyEntries, sigEntries, nil
-}
-
-func keyFromKeyFile(path string) (*btcec.PrivateKey, error) {
-	path, err := homedir.Expand(path)
-	if err != nil {
-		return nil, err
-	}
-	lines, err := readLines(path)
-	if err != nil {
-		return nil, err
-	}
-	if len(lines) == 0 {
-		return nil, errors.New("No private key in keyfile")
-	}
-	keyBytes, err := hex.DecodeString(lines[0])
-	k, _ := btcec.PrivKeyFromBytes(btcec.S256(), keyBytes)
-
-	return k, nil
 }
 
 func main() {
