@@ -828,23 +828,53 @@ func main() {
 		})
 	})
 	cp.Command("signers", "Manage authorized signers", func(cmd *cli.Cmd) {
+		cmd.Command("add", "Initiate the process of adding a signer", func(scmd *cli.Cmd) {
+			addition := scmd.StringArg("IDENTIFIER", "", "The public identifier to add")
+
+			scmd.Action = func() {
+				if _, err := os.Stat(*trustfile); os.IsNotExist(err) {
+					fmt.Println("Trustfile not found at " + *trustfile)
+					fmt.Println("You may run `trustedb init` to create a Trustfile")
+					os.Exit(1)
+				}
+
+				if _, err := os.Stat(*trustfile); os.IsNotExist(err) {
+					fmt.Println("Identity not found at " + *trustfile)
+					fmt.Println("You may run `trustedb identity create` to create an identity")
+					os.Exit(1)
+				}
+
+				privKey, err := keyFromKeyFile(*identity)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+
+				if err := addEntryToDbFile(privKey, *addition, *trustfile); err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+			}
+		})
+
+		cmd.Command("remove", "Initiate the process of removing a signer", func(cmd *cli.Cmd) {
+			fmt.Println("start removing a signer")
+		})
+
+		cmd.Command("confirm", "Confirm an addition or revocation", func(cmd *cli.Cmd) {
+			identity := cmd.String(cli.StringArg{Name: "IDENTIFIER", Value: "", Desc: "The public identifier to confirm"})
+			fmt.Println(identity)
+		})
+
 		cmd.Command("status", "determine the status of a signer", func(cmd *cli.Cmd) {
 			fmt.Println("status of key")
 		})
+
 		cmd.Command("list", "List the signers", func(cmd *cli.Cmd) {
 			fmt.Println("List keys")
 		})
 	})
-	cp.Command("add", "Initiate the process of adding a signer", func(cmd *cli.Cmd) {
-		fmt.Println("start adding a signer")
-	})
-	cp.Command("remove", "Initiate the process of removing a signer", func(cmd *cli.Cmd) {
-		fmt.Println("start removing a signer")
-	})
-	cp.Command("confirm", "Confirm an addition or revocation", func(cmd *cli.Cmd) {
-		identity := cmd.String(cli.StringArg{Name: "IDENTIFIER", Value: "", Desc: "The public identifier to confirm"})
-		fmt.Println(identity)
-	})
+
 	cp.Command("verify", "Verify a signature against the Trustfile", func(cmd *cli.Cmd) {
 		identity := cmd.String(cli.StringArg{Name: "IDENTIFIER", Value: "", Desc: "The public identifier to add"})
 		fmt.Println(identity)
