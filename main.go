@@ -89,7 +89,7 @@ func cp(dst, src string) error {
 /*
  * Identity Operations
  */
-func keyFromKeyFile(path string) (*btcec.PrivateKey, error) {
+func extendedKeyFromKeyFile(path string) (*hdkeychain.ExtendedKey, error) {
 	path, err := homedir.Expand(path)
 	if err != nil {
 		return nil, err
@@ -101,10 +101,17 @@ func keyFromKeyFile(path string) (*btcec.PrivateKey, error) {
 	if len(lines) == 0 {
 		return nil, errors.New("No private key in keyfile")
 	}
-	keyBytes, err := hex.DecodeString(lines[0])
-	k, _ := btcec.PrivKeyFromBytes(btcec.S256(), keyBytes)
 
-	return k, nil
+	// Decode the seed and instantiate the keychain
+	seed, err := hex.DecodeString(lines[0])
+	key, err := hdkeychain.NewMaster(seed, &chaincfg.MainNetParams)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	child, _ := strconv.Atoi(lines[1])
+	return key.Child(hdkeychain.HardenedKeyStart + uint32(child))
 }
 
 func createIdentity(path string) error {
@@ -155,7 +162,13 @@ func createIdentity(path string) error {
 		return err
 	}
 
-	pubIdentity, err := identity.Neuter()
+	printPublicIdentityFromExtendedKey(identity)
+
+	return w.Flush()
+}
+
+func printPublicIdentityFromExtendedKey(key *hdkeychain.ExtendedKey) error {
+	pubIdentity, err := key.Neuter()
 	if err != nil {
 		fmt.Println(err)
 		return err
@@ -163,7 +176,7 @@ func createIdentity(path string) error {
 
 	fmt.Println("Your Identity: " + pubIdentity.String())
 
-	return w.Flush()
+	return nil
 }
 
 /*
@@ -790,20 +803,21 @@ func parseDbFile(path string) ([]KeyEntry, [][]SigEntry, error) {
 func main() {
 	cp := cli.App("trustedb", "Trustedb.")
 	var (
-		identity = cp.String(cli.StringOpt{
+		identityOpt = cli.StringOpt{
 			Name:   "i identity",
 			Value:  "~/.trustedb/identity",
 			Desc:   "Location of identity",
 			EnvVar: "TRUSTEDB_IDENTITY",
-		})
-		trustfile = cp.String(cli.StringOpt{
+		}
+		trustfileOpt = cli.StringOpt{
 			Name:   "t trustfile",
 			Value:  "./Trustfile",
 			Desc:   "Location of Trustfile",
 			EnvVar: "TRUSTEDB_TRUSTFILE",
-		})
+		}
 	)
 	cp.Command("init", "Create a Trustfile", func(cmd *cli.Cmd) {
+		trustfile := cmd.String(trustfileOpt)
 		cmd.Action = func() {
 			if len(*trustfile) == 0 {
 				fmt.Println("Please specify a trustfile")
@@ -815,9 +829,10 @@ func main() {
 			}
 		}
 	})
-	cp.Command("identity", "Manage your trustedb identity", func(cmd *cli.Cmd) {
-		cmd.Command("create", "Create a new identity", func(cmd *cli.Cmd) {
-			cmd.Action = func() {
+	cp.Command("identity", "Manage your trustedb identity", func(ident *cli.Cmd) {
+		ident.Command("create", "Create a new identity", func(create *cli.Cmd) {
+			identity := create.String(identityOpt)
+			create.Action = func() {
 				if len(*identity) == 0 {
 					fmt.Println("Please specify the location of your trustedb identity")
 				}
@@ -827,10 +842,27 @@ func main() {
 				}
 			}
 		})
+		ident.Command("show", "Show current identity", func(show *cli.Cmd) {
+			identity := show.String(identityOpt)
+			show.Action = func() {
+				if len(*identity) == 0 {
+					fmt.Println("Please specify the location of your trustedb identity")
+				}
+				key, err := extendedKeyFromKeyFile(*identity)
+				if err != nil {
+					fmt.Println("Error", err)
+				}
+
+				// Print the key
+				printPublicIdentityFromExtendedKey(key)
+			}
+		})
 	})
 	cp.Command("signers", "Manage authorized signers", func(cmd *cli.Cmd) {
 		cmd.Command("add", "Initiate the process of adding a signer", func(scmd *cli.Cmd) {
 			addition := scmd.StringArg("IDENTIFIER", "", "The public identifier to add")
+			identity := scmd.String(identityOpt)
+			trustfile := scmd.String(trustfileOpt)
 
 			scmd.Action = func() {
 				if _, err := os.Stat(*trustfile); os.IsNotExist(err) {
@@ -845,13 +877,14 @@ func main() {
 					os.Exit(1)
 				}
 
-				privKey, err := keyFromKeyFile(*identity)
+				privKey, err := extendedKeyFromKeyFile(*identity)
 				if err != nil {
 					fmt.Println(err)
 					os.Exit(1)
 				}
 
-				if err := addEntryToDbFile(privKey, *addition, *trustfile); err != nil {
+				k, _ := privKey.ECPrivKey()
+				if err := addEntryToDbFile(k, *addition, *trustfile); err != nil {
 					fmt.Println(err)
 					os.Exit(1)
 				}
