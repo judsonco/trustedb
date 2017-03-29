@@ -679,7 +679,7 @@ func addEntryToDbFile(key *hdkeychain.ExtendedKey, identifier string, path strin
 
 	w := bufio.NewWriter(file)
 	_, fileErr := fmt.Fprintln(w, strings.Join([]string{
-		"=+",
+		ADDITION_COMMAND,
 		strings.Replace(identifier, " ", "", -1),
 		hex.EncodeToString(doubleSha256Sum(pub.SerializeCompressed())),
 	}, " "))
