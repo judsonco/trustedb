@@ -829,6 +829,12 @@ func main() {
 			Desc:   "Location of Trustfile",
 			EnvVar: "TRUSTEDB_TRUSTFILE",
 		}
+		signOpt = cli.BoolOpt{
+			Name:      "s sign",
+			Value:     false,
+			HideValue: true,
+			Desc:      "Sign Trustfile after command",
+		}
 	)
 	cp.Command("init", "Create a Trustfile", func(cmd *cli.Cmd) {
 		trustfile := cmd.String(trustfileOpt)
@@ -874,7 +880,9 @@ func main() {
 	})
 	cp.Command("signers", "Manage authorized signers", func(cmd *cli.Cmd) {
 		cmd.Command("add", "Initiate the process of adding a signer", func(scmd *cli.Cmd) {
-			addition := scmd.StringArg("IDENTIFIER", "", "The public identifier to add")
+			pubkey := scmd.StringArg("IDENTITY", "", "xpub to add. Use `self` to add current identity.")
+			addition := scmd.StringArg("IDENTIFIER", "", "Fiendly identifier (e.g. email, irc nick).")
+			sign := scmd.Bool(signOpt)
 			identity := scmd.String(identityOpt)
 			trustfile := scmd.String(trustfileOpt)
 
