@@ -243,6 +243,15 @@ func createTrustfile(path string) error {
 	}
 	defer file.Close()
 
+	// Generate 128 byte string, base64 encode
+	token, err := generateRandomString(128)
+	if err != nil {
+		return err
+	}
+
+	w := bufio.NewWriter(file)
+	fmt.Fprintln(w, token)
+
 	return nil
 }
 
