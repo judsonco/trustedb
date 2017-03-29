@@ -237,7 +237,7 @@ func createTrustfile(path string) error {
 		return errors.New("Trustfile already exists at specified path")
 	}
 
-	file, err := os.Create(path)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0766)
 	if err != nil {
 		return err
 	}
@@ -252,7 +252,7 @@ func createTrustfile(path string) error {
 	w := bufio.NewWriter(file)
 	fmt.Fprintln(w, token)
 
-	return nil
+	return w.Flush()
 }
 
 /*
