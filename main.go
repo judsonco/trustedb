@@ -651,7 +651,7 @@ func approveLastRemovalInDbFile(pubKey *btcec.PublicKey, key *btcec.PrivateKey, 
 	}
 }
 
-func addEntryToDbFile(key *btcec.PrivateKey, identifier string, path string) error {
+func addEntryToDbFile(key *hdkeychain.ExtendedKey, identifier string, path string) error {
 	if err := verifyDbFile(path, false); err != nil {
 		return err
 	}
@@ -667,11 +667,21 @@ func addEntryToDbFile(key *btcec.PrivateKey, identifier string, path string) err
 	}
 	defer file.Close()
 
+	extended, err := key.Neuter()
+	if err != nil {
+		return err
+	}
+
+	pub, err := extended.ECPubKey()
+	if err != nil {
+		return err
+	}
+
 	w := bufio.NewWriter(file)
 	_, fileErr := fmt.Fprintln(w, strings.Join([]string{
 		"=+",
 		strings.Replace(identifier, " ", "", -1),
-		hex.EncodeToString(doubleSha256Sum(key.PubKey().SerializeCompressed())),
+		hex.EncodeToString(doubleSha256Sum(pub.SerializeCompressed())),
 	}, " "))
 
 	if fileErr != nil {
@@ -881,14 +891,30 @@ func main() {
 					os.Exit(1)
 				}
 
-				privKey, err := extendedKeyFromKeyFile(*identity)
+				var (
+					extendedKey *hdkeychain.ExtendedKey
+					err         error
+				)
+				if *pubkey != "self" {
+					extendedKey, err = hdkeychain.NewKeyFromString(*pubkey)
+				} else {
+					privateKey, err := extendedKeyFromKeyFile(*identity)
+					if err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					}
+					extendedKey, err = privateKey.Neuter()
+				}
+
 				if err != nil {
 					fmt.Println(err)
 					os.Exit(1)
 				}
 
-				k, _ := privKey.ECPrivKey()
-				if err := addEntryToDbFile(k, *addition, *trustfile); err != nil {
+				fmt.Println(extendedKey.String())
+				os.Exit(1)
+				fmt.Println(*sign)
+				if err := addEntryToDbFile(extendedKey, *addition, *trustfile); err != nil {
 					fmt.Println(err)
 					os.Exit(1)
 				}
