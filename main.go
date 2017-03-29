@@ -48,6 +48,7 @@ const TRUSTFILE_NEWLINE string = "\n"
 
 /*
  * File Operations
+ * http://stackoverflow.com/a/16615559/301043
  */
 func readLines(path string) ([]string, error) {
 	path, err := homedir.Expand(path)
