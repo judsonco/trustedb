@@ -66,6 +66,9 @@ func readLines(path string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
+/*
+ * Copy a file from src to dst
+ */
 func cp(dst, src string) error {
 	s, err := os.Open(src)
 	if err != nil {
