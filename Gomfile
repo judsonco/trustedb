@@ -4,6 +4,9 @@ gom 'github.com/jawher/mow.cli'
 # Bitcoin EC Utils
 gom 'github.com/btcsuite/btcd/btcec'
 
+# Base58 Encoding
+gom 'github.com/btcsuite/btcutil/base58'
+
 # Bitcoin bip32 key gen
 gom 'github.com/btcsuite/btcutil/hdkeychain'
 gom 'github.com/btcsuite/btcd/chaincfg'
