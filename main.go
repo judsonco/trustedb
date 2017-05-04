@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcutil/base58"
 	"github.com/btcsuite/btcutil/hdkeychain"
 	"github.com/jawher/mow.cli"
 	"github.com/mitchellh/go-homedir"
@@ -208,7 +208,7 @@ func generateRandomBytes(n int) ([]byte, error) {
 }
 
 /**
- * generateRandomString returns a URL-safe, base64 encoded
+ * generateRandomString returns a base58 encoded,
  * securely generated random string.
  * It will return an error if the system's secure random
  * number generator fails to function correctly, in which
@@ -216,7 +216,7 @@ func generateRandomBytes(n int) ([]byte, error) {
  */
 func generateRandomString(s int) (string, error) {
 	b, err := generateRandomBytes(s)
-	return base64.URLEncoding.EncodeToString(b), err
+	return base58.Encode(b), err
 }
 
 /*
@@ -243,7 +243,7 @@ func createTrustfile(path string) error {
 	}
 	defer file.Close()
 
-	// Generate 128 byte string, base64 encode
+	// Generate 128 byte string, base58 encode
 	token, err := generateRandomString(128)
 	if err != nil {
 		return err
